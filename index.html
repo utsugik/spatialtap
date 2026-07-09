@@ -146,7 +146,7 @@
 <div class="deck">
   <div class="faders">
     <div class="fader"><span class="lab">Distance</span>
-      <input type="range" id="fDist" min="0.4" max="12" step="0.1" value="3"><span class="val" id="vDist">3.0 m</span></div>
+      <input type="range" id="fDist" min="0" max="1000" step="1" value="365"><span class="val" id="vDist">3.0 m</span></div>
     <div class="fader"><span class="lab">Width</span>
       <input type="range" id="fWidth" min="0" max="100" step="1" value="50"><span class="val" id="vWidth">50%</span></div>
     <div class="fader"><span class="lab">Room</span>
@@ -174,15 +174,21 @@
   let placed=false, dragging=false, playing=false;
 
   const AC=window.AudioContext||window.webkitAudioContext;
-  let ctx=null, pM=null,pL=null,pR=null, dry=null,conv=null,wet=null,send=null,limiter=null, splitter=null;
+  let ctx=null, pM=null,pL=null,pR=null, dry=null,conv=null,wet=null,send=null,limiter=null,distComp=null, splitter=null;
   let audioBuffer=null, srcNode=null, activeNode=null;
   let mediaSrc=null, mediaReady=false, useElementAudio=false;
   let roomDebTimer=null;
+
+  // Distanceスライダー: 0-1000のポジション値を指数変換して距離(m)にする対数カーブ。近距離ほど細かく調整できる。
+  const DIST_MIN=0.4, DIST_MAX=100, DIST_POS_MAX=1000;
+  const distFromPos=pos=>DIST_MIN*Math.pow(DIST_MAX/DIST_MIN,pos/DIST_POS_MAX);
+  const posFromDist=d=>DIST_POS_MAX*Math.log(d/DIST_MIN)/Math.log(DIST_MAX/DIST_MIN);
 
   const $=id=>document.getElementById(id);
   const stage=$('stage'), vid=$('vid');
   const SCN=0.09;
   vid.muted=true; vid.loop=true; vid.playsInline=true; vid.setAttribute('playsinline','');
+  $('fDist').value=Math.round(posFromDist(ctrl.dist));
 
   function setStatus(t,on){$('status').className='status'+(on?' playing':'');$('status').innerHTML='<span class="dot2"></span>'+t;}
 
@@ -190,7 +196,7 @@
     if(ctx) return;
     ctx=new AC();
     const mk=()=>{const p=ctx.createPanner();p.panningModel='HRTF';p.distanceModel='inverse';
-      p.refDistance=1;p.maxDistance=80;p.rolloffFactor=1.0;return p;};
+      p.refDistance=1;p.maxDistance=DIST_MAX;p.rolloffFactor=1.0;return p;};
     pM=mk();pL=mk();pR=mk();
     limiter=ctx.createDynamicsCompressor();
     limiter.threshold.value=-9;limiter.knee.value=6;limiter.ratio.value=8;
@@ -202,7 +208,10 @@
     send=ctx.createGain();send.gain.value=0.15;
     conv=ctx.createConvolver();wet=ctx.createGain();wet.gain.value=0.18;
     send.connect(conv);conv.connect(wet).connect(limiter);
-    [pM,pL,pR].forEach(p=>{p.connect(dry);p.connect(send);});
+    // distComp: PannerNode自身の距離減衰(1/d)を遠距離側だけ補償し、100mでも完全無音にしない
+    distComp=ctx.createGain();distComp.gain.value=1;
+    distComp.connect(dry);distComp.connect(send);
+    [pM,pL,pR].forEach(p=>{p.connect(distComp);});
     splitter=ctx.createChannelSplitter(2);
     const L=ctx.listener,t=ctx.currentTime;
     if(L.forwardX){L.forwardZ.setValueAtTime(-1,t);L.upY.setValueAtTime(1,t);}
@@ -249,13 +258,22 @@
     if(ctrl.stereo){setP(pL,C.x-o.x,C.y-o.y,C.zf-o.z);setP(pR,C.x+o.x,C.y+o.y,C.zf+o.z);}
     else{setP(pM,C.x,C.y,C.zf);}
     updateSend(immediate);
+    updateDistComp(immediate);
   }
   function updateSend(immediate){
     if(!send) return;
-    const distRatio=Math.max(0,Math.min(1,(ctrl.dist-0.4)/(12-0.4)));
+    const distRatio=Math.max(0,Math.min(1,Math.log(ctrl.dist/DIST_MIN)/Math.log(DIST_MAX/DIST_MIN)));
     const amt=0.15+distRatio*0.85;
     const t=ctx.currentTime,tc=immediate?0.001:0.08;
     send.gain.setTargetAtTime(amt,t,tc);
+  }
+  function updateDistComp(immediate){
+    if(!distComp) return;
+    const FLOOR=0.1; // -20dB相当。遠距離でも「聞こえない」にはしない最低音量
+    const natural=ctrl.dist<=1?1:1/ctrl.dist; // PannerNode(refDistance=1,rolloffFactor=1)の減衰と同じ式
+    const comp=Math.max(1,FLOOR/natural); // naturalがfloorを下回る距離(=10m超)でのみ補償が働く。近距離側は常に1倍=変更なし
+    const t=ctx.currentTime,tc=immediate?0.001:0.08;
+    distComp.gain.setTargetAtTime(comp,t,tc);
   }
   function updateDots(){
     const o=rotOffset(), clamp=n=>Math.max(0,Math.min(1,n));
@@ -290,7 +308,7 @@
   stage.addEventListener('pointercancel',()=>{dragging=false;});
 
   // ---------- faders ----------
-  $('fDist').addEventListener('input',e=>{ctrl.dist=parseFloat(e.target.value);$('vDist').textContent=ctrl.dist.toFixed(1)+' m';refresh();});
+  $('fDist').addEventListener('input',e=>{ctrl.dist=distFromPos(parseFloat(e.target.value));$('vDist').textContent=ctrl.dist.toFixed(1)+' m';refresh();});
   $('fWidth').addEventListener('input',e=>{ctrl.width=e.target.value/100;$('vWidth').textContent=e.target.value+'%';refresh();});
   $('fRoom').addEventListener('input',e=>{
     ctrl.room=parseFloat(e.target.value);$('vRoom').textContent=ctrl.room.toFixed(1)+' m';
