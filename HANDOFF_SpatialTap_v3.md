@@ -5,6 +5,7 @@
 このドキュメントは Claude.ai プロジェクト「Spatial Tap 開発」の単一の情報源（single source of truth）です。
 新しいチャットを始めるときは、まずこれを読んでから作業を開始してください。
 （v2→v3 の主な変更: Fable 5 監査・Sonnet 5 査読・レビューの結論を「12章 決定事項」として確定。次フェーズは実装。）
+（v3内更新 2026-07-10: GitHub Pages公開完了・iPhone実機検証成功を反映。次は6章-2「音の説得力3点セット」。）
 
 ---
 
@@ -79,14 +80,17 @@
 
 ## 6. 次にやること（優先順・12章の決定を反映）
 
-1. **【最優先】GitHub Pages 公開 → iPhone 実ブラウザで動作確認。** 全計画の分岐点。
-   - Public リポジトリ作成 → index.html アップ → Settings>Pages で main/(root) 公開。
-   - 発行URLを実ブラウザで開く。LOGに `VIDEO ERROR` が出ず `video.play ok` と `audio decoded` が出れば成功。
-   - **ここで HEVC再生可否 と decodeAudioData可否 の2つの「要検証」が確定する。これが出るまで ffmpeg.wasm には着手しない。**
-2. **音の説得力3点セット**（既存構造を壊さない小修正・効果大。Claude Code に一括依頼）。
-   - (a) 距離連動の dry/wet 比 ＋ 距離連動ローパス（高域減衰）
-   - (b) 出力リミッター（DynamicsCompressor）
-   - (c) Room フェーダーの makeIR デバウンス（150ms程度）
+1. ✅ **完了（2026-07-10）: GitHub Pages 公開 → iPhone 実ブラウザで動作確認。**
+   - 公開URL: https://utsugik.github.io/spatialtap/ （Publicリポジトリ: https://github.com/utsugik/spatialtap ）
+   - 実機検証結果: `VIDEO ERROR` なし、`audio decoded` ch=2 dur=189.4 sec（.mp4/H.264）で成功。
+   - **確定した結論: 検証したファイル（.mp4/H.264）は実ブラウザで問題なく再生・decode可能。ffmpeg.wasmは現時点で不要（12章「非採用」のまま据え置き）。**
+   - ※注記: 今回検証したのは .mp4/H.264。HEVC/.mov単体での再生可否はまだ未検証のまま（5章(B)参照、今後実際にHEVC素材を使う場面が来たら確認）。
+2. ✅ **完了（2026-07-10）: 音の説得力3点セット**（index.html 実装済み・未pushの実機再検証はこれから）。
+   - (a) 距離連動の dry/wet 比: panner→convの直結を独立GainNode `send` 経由に変更。距離0.4〜12mを send.gain 0.15〜1.0にマッピングし、遠いほどwetが増える構成にした。
+   - (b) 出力リミッター: dry/wetの合流前に `DynamicsCompressor`（threshold -3dB, ratio 20, attack 3ms, release 150ms）を追加。
+   - (c) Room フェーダーのデバウンス: `fRoom` の input イベントで `makeIR()` を直接呼ばず、150ms の `setTimeout` 経由に変更（ドラッグ中の多重生成を防止）。
+   - ※距離連動ローパス・IR初期反射（12章「採用」の別項目）は今回のスコープ外。次の作業候補として残っている。
+   - **次にやること: 実機（iPhone）で再生し、距離を変えたときのdry/wet変化・音割れの有無・Roomドラッグ時のプチノイズ有無を確認する（ENV）。**
 3. **モノ音声フォールバック時の R チャンネル無音バグ修正**（小さいが「壊れてる」誤解を招くため優先）。
 4. （保留・体験拡張）デモ動画同梱＋Orbit（自動旋回）ボタン、ジャイロ連動、軌跡の記録/再生。
 5. （保留・要実機調整）高さ方向のEQ強化、方位マッピングの実測合わせ（±35°/±90°の切替）。
