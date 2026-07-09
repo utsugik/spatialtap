@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Spatial Tap — 聴空間</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,500&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#06070b; --surface:#0e0f17; --panel:#0b0c13; --line:#1a1c28; --line2:#272a3b;
+    --text:#e9eaf2; --muted:#5f6178; --muted2:#454862;
+    --L:#23d3c2; --L-glow:rgba(35,211,194,.55);
+    --R:#ff3d6e; --R-glow:rgba(255,61,110,.55);
+    --M:#ffb13d; --M-glow:rgba(255,177,61,.55);
+    --you:#7fd4ff; --you-glow:rgba(127,212,255,.5);
+    --grid:rgba(150,170,210,.16); --grid-far:rgba(120,140,180,.07);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--text);
+    font-family:'JetBrains Mono',ui-monospace,monospace;overflow:hidden;
+    overscroll-behavior:none;-webkit-font-smoothing:antialiased}
+  body{display:flex;flex-direction:column;height:100vh;height:100dvh}
+
+  header{padding:12px 16px 11px;border-bottom:1px solid var(--line);background:var(--surface);flex-shrink:0}
+  .trow{display:flex;align-items:baseline;gap:10px;margin-bottom:11px}
+  .title{font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:500;font-size:22px;line-height:1}
+  .ttag{font-size:9px;color:var(--muted);letter-spacing:.18em;text-transform:uppercase}
+  .badge{margin-left:auto;font-size:9px;letter-spacing:.16em;color:var(--muted);
+    border:1px solid var(--line2);padding:3px 8px;border-radius:2px}
+  .badge.stereo{color:var(--L);border-color:var(--L)}
+  .badge.mono{color:var(--M);border-color:var(--M)}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .btn{background:transparent;color:var(--text);border:1px solid var(--line2);
+    padding:8px 13px;border-radius:2px;font-family:inherit;font-size:11px;font-weight:500;
+    letter-spacing:.1em;text-transform:uppercase;cursor:pointer;
+    transition:background .15s,border-color .15s,color .15s;-webkit-appearance:none}
+  .btn:active{background:var(--line)}
+  .btn.primary{border-color:var(--you);color:var(--you)}
+  .btn:disabled{opacity:.3;cursor:not-allowed}
+  .file-label{cursor:pointer}.file-label input{display:none}
+  .fname{margin-top:9px;font-size:10px;color:var(--muted);letter-spacing:.05em;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  #stage{flex:1;position:relative;overflow:hidden;touch-action:none;
+    background:radial-gradient(120% 90% at 50% 38%,rgba(40,60,110,.10),transparent 60%),var(--bg);
+    user-select:none;-webkit-user-select:none;min-height:0}
+  #scene{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .status{position:absolute;top:12px;left:12px;font-size:10px;color:var(--muted);letter-spacing:.14em;pointer-events:none}
+  .status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--muted);margin-right:7px;vertical-align:middle}
+  .status.playing .dot{background:var(--R);box-shadow:0 0 10px var(--R-glow);animation:blink 1.4s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+  .readout{position:absolute;top:12px;right:12px;font-size:10px;color:var(--muted);
+    letter-spacing:.06em;text-align:right;line-height:1.8;pointer-events:none;font-variant-numeric:tabular-nums}
+  .readout b{color:var(--text);font-weight:500}
+  .hint{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);color:var(--muted);
+    font-size:11px;text-align:center;pointer-events:none;letter-spacing:.03em;line-height:1.7;
+    width:88%;max-width:320px;transition:opacity .4s}
+  .hint .em{font-family:'Fraunces',Georgia,serif;font-style:italic;color:var(--text);font-size:14px;display:block;margin-bottom:6px;letter-spacing:0}
+
+  /* control deck */
+  .deck{flex-shrink:0;background:var(--panel);border-top:1px solid var(--line);
+    padding:11px 14px 14px;display:flex;flex-direction:column;gap:11px}
+  .faders{display:flex;flex-direction:column;gap:9px}
+  .fader{display:flex;align-items:center;gap:12px}
+  .fader .lab{font-size:9px;letter-spacing:.16em;color:var(--muted);text-transform:uppercase;width:58px;flex-shrink:0}
+  .fader .val{font-size:10px;color:var(--you);letter-spacing:.04em;width:54px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:2px;background:var(--line2);border-radius:2px;outline:none}
+  input[type=range]:disabled{opacity:.3}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--you);box-shadow:0 0 12px var(--you-glow);cursor:pointer}
+  input[type=range]::-moz-range-thumb{width:20px;height:20px;border:none;border-radius:50%;background:var(--you);box-shadow:0 0 12px var(--you-glow)}
+
+  .rot{display:flex;justify-content:space-around;align-items:flex-start;gap:8px;
+    border-top:1px solid var(--line);padding-top:11px}
+  .rot.dim{opacity:.32;pointer-events:none}
+  .rotlab{font-size:9px;letter-spacing:.16em;color:var(--muted);text-transform:uppercase;text-align:center;margin-bottom:7px}
+  .knobwrap{display:flex;flex-direction:column;align-items:center}
+  .knob{width:62px;height:62px;border-radius:50%;position:relative;cursor:ns-resize;
+    background:radial-gradient(circle at 38% 32%,#22243a,#0d0e16 72%);
+    border:1px solid var(--line2);box-shadow:inset 0 1px 2px rgba(255,255,255,.04),0 2px 6px rgba(0,0,0,.5);touch-action:none}
+  .knob .ind{position:absolute;left:50%;top:6px;width:2px;height:18px;background:var(--you);
+    border-radius:2px;transform-origin:50% 25px;transform:translateX(-50%) rotate(0deg);box-shadow:0 0 6px var(--you-glow)}
+  .knob .kv{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:13px;color:var(--text);font-variant-numeric:tabular-nums}
+  .knob .deg{position:absolute;font-size:7px;color:var(--muted2);letter-spacing:.1em}
+  .knob .d0{top:-2px;left:50%;transform:translateX(-50%)}
+  .knob .dn{left:-12px;top:50%;transform:translateY(-50%)}
+  .knob .dp{right:-12px;top:50%;transform:translateY(-50%)}
+  .knob .d18{bottom:-12px;left:50%;transform:translateX(-50%)}
+</style>
+</head>
+<body>
+<header>
+  <div class="trow">
+    <div class="title">Spatial Tap</div>
+    <div class="ttag">聴空間 · room HRTF</div>
+    <div class="badge" id="badge">no input</div>
+  </div>
+  <div class="controls">
+    <label class="btn file-label">Load Audio<input type="file" id="file" accept="audio/*"></label>
+    <button class="btn primary" id="play" disabled>▶ Play</button>
+    <button class="btn" id="reset">Center</button>
+  </div>
+  <div class="fname" id="fname">no file loaded</div>
+</header>
+
+<div id="stage">
+  <svg id="scene" preserveAspectRatio="xMidYMid meet" viewBox="0 0 400 360" xmlns="http://www.w3.org/2000/svg"></svg>
+  <div class="status" id="status"><span class="dot"></span>IDLE</div>
+  <div class="readout" id="readout">azimuth <b>0°</b><br>distance <b>0.0</b><br>height <b>0%</b></div>
+  <div class="hint" id="hint"><span class="em">Drag in the room</span>左右=方位 / 上下=距離（奥ほど遠い）</div>
+</div>
+
+<div class="deck">
+  <div class="faders">
+    <div class="fader"><span class="lab">Height</span>
+      <input type="range" id="fHeight" min="-100" max="100" step="1" value="0">
+      <span class="val" id="vHeight">0%</span></div>
+    <div class="fader"><span class="lab">Width</span>
+      <input type="range" id="fWidth" min="0" max="100" step="1" value="50" disabled>
+      <span class="val" id="vWidth">50%</span></div>
+    <div class="fader"><span class="lab">Room</span>
+      <input type="range" id="fRoom" min="1" max="20" step="0.5" value="6">
+      <span class="val" id="vRoom">6.0 m</span></div>
+  </div>
+  <div class="rot dim" id="rotPanel">
+    <div class="knobwrap"><div class="rotlab">yaw</div>
+      <div class="knob" id="kYaw"><span class="deg d0">0</span><span class="deg dn">-90</span><span class="deg dp">90</span><span class="deg d18">180</span><div class="ind"></div><div class="kv">0</div></div></div>
+    <div class="knobwrap"><div class="rotlab">pitch</div>
+      <div class="knob" id="kPitch"><span class="deg d0">0</span><span class="deg dn">-90</span><span class="deg dp">90</span><span class="deg d18">180</span><div class="ind"></div><div class="kv">0</div></div></div>
+    <div class="knobwrap"><div class="rotlab">roll</div>
+      <div class="knob" id="kRoll"><span class="deg d0">0</span><span class="deg dn">-90</span><span class="deg dp">90</span><span class="deg d18">180</span><div class="ind"></div><div class="kv">0</div></div></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  // ===== view / projection (one-point perspective room) =====
+  const VB={cx:200,cy:158,f:240,camZ:1.6};
+  const ROOM={w:2.84,h:2.33,depth:7,nearZ:0.4}; // fixed VISUAL units
+  // project a world point (x:right, y:up, z:depth-into-room) -> svg coords + perspective scale k
+  function proj(x,y,z){ const k=VB.f/(VB.camZ+z); return {x:VB.cx+x*k, y:VB.cy-y*k, k}; }
+
+  // ===== state =====
+  const ctrl={x:0, depth:0.45, height:0, width:0.5, room:6, yaw:0, pitch:0, roll:0}; // x:-1..1 depth:0..1 height:-1..1
+  let channels=0, placed=false, dragging=false;
+
+  // ===== audio =====
+  const AC=window.AudioContext||window.webkitAudioContext;
+  let ctx=null, buffer=null, srcNode=null, splitter=null, playing=false;
+  let pM=null,pL=null,pR=null, dry=null, conv=null, wet=null;
+
+  const $=id=>document.getElementById(id);
+  const stage=$('stage'), svg=$('scene'), badge=$('badge');
+  const SVGNS="http://www.w3.org/2000/svg";
+
+  function ensureCtx(){
+    if(ctx) return;
+    ctx=new AC();
+    const mk=()=>{const p=ctx.createPanner();p.panningModel='HRTF';p.distanceModel='inverse';
+      p.refDistance=1;p.maxDistance=80;p.rolloffFactor=1.0;return p;};
+    pM=mk();pL=mk();pR=mk();
+    dry=ctx.createGain();dry.gain.value=1;dry.connect(ctx.destination);
+    conv=ctx.createConvolver();wet=ctx.createGain();wet.gain.value=0.18;
+    conv.connect(wet).connect(ctx.destination);
+    [pM,pL,pR].forEach(p=>{p.connect(dry);p.connect(conv);});
+    const L=ctx.listener,t=ctx.currentTime; // face -z, up +y
+    if(L.forwardX){L.forwardZ.setValueAtTime(-1,t);L.upY.setValueAtTime(1,t);}
+    else if(L.setOrientation){L.setOrientation(0,0,-1,0,1,0);}
+    makeIR(); applyAudio(true);
+  }
+  // synthetic impulse response; length scales with room size -> audible "space size"
+  function makeIR(){
+    if(!ctx) return;
+    const sec=0.25+ (ctrl.room/20)*2.6, sr=ctx.sampleRate;
+    const len=Math.max(1,Math.floor(sr*sec)), ir=ctx.createBuffer(2,len,sr);
+    for(let ch=0;ch<2;ch++){const d=ir.getChannelData(ch);
+      for(let i=0;i<len;i++){d[i]=(Math.random()*2-1)*Math.pow(1-i/len,2.2);}}
+    try{conv.buffer=ir;}catch(e){}
+    if(wet) wet.gain.value=0.06+(ctrl.room/20)*0.34;
+  }
+
+  // control(normalized) -> visual world position
+  function worldCenter(){
+    return { x: ctrl.x*(ROOM.w/2), y: ctrl.height*(ROOM.h/2),
+             z: ROOM.nearZ + ctrl.depth*ROOM.depth };
+  }
+  // rotate the stereo offset vector by yaw(Y)/pitch(X)/roll(Z); base = (+halfWidth,0,0)
+  function rotOffset(){
+    const hw=ctrl.width*(ROOM.w*0.42);
+    const ry=ctrl.yaw*Math.PI/180, rp=ctrl.pitch*Math.PI/180, rr=ctrl.roll*Math.PI/180;
+    let x=hw,y=0,z=0;
+    // roll about z(front): tilt L/R vertically
+    let x1=x*Math.cos(rr)-y*Math.sin(rr), y1=x*Math.sin(rr)+y*Math.cos(rr), z1=z;
+    // pitch about x
+    let y2=y1*Math.cos(rp)-z1*Math.sin(rp), z2=y1*Math.sin(rp)+z1*Math.cos(rp), x2=x1;
+    // yaw about y: swing L/R into depth
+    let x3=x2*Math.cos(ry)+z2*Math.sin(ry), z3=-x2*Math.sin(ry)+z2*Math.cos(ry), y3=y2;
+    return {x:x3,y:y3,z:z3};
+  }
+  // returns array of source points {role, wx,wy,wz}
+  function sources(){
+    const C=worldCenter();
+    if(channels===2){
+      const o=rotOffset();
+      return [
+        {role:'L', wx:C.x-o.x, wy:C.y-o.y, wz:C.z-o.z},
+        {role:'R', wx:C.x+o.x, wy:C.y+o.y, wz:C.z+o.z},
+      ];
+    }
+    return [{role:'M', wx:C.x, wy:C.y, wz:C.z}];
+  }
+
+  function applyAudio(immediate){
+    if(!ctx) return;
+    const aScale=ctrl.room; // visual units -> meters
+    const setP=(p,s)=>{ if(!p)return; const t=ctx.currentTime,tc=immediate?0.001:0.05;
+      const X=s.wx*aScale, Y=s.wy*aScale, Z=-s.wz*aScale; // front = -z in WebAudio
+      if(p.positionX){p.positionX.setTargetAtTime(X,t,tc);p.positionY.setTargetAtTime(Y,t,tc);p.positionZ.setTargetAtTime(Z,t,tc);}
+      else p.setPosition(X,Y,Z);
+    };
+    const s=sources();
+    if(channels===2){ setP(pL,s[0]); setP(pR,s[1]); }
+    else { setP(pM,s[0]); }
+  }
+
+  // ===== drawing =====
+  function makePath(pts){return pts.map((p,i)=>(i?'L':'M')+p.x.toFixed(1)+' '+p.y.toFixed(1)).join(' ');}
+  function line(x1,y1,z1,x2,y2,z2,far){
+    const a=proj(x1,y1,z1),b=proj(x2,y2,z2);
+    const el=document.createElementNS(SVGNS,'path');
+    el.setAttribute('d',`M ${a.x.toFixed(1)} ${a.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}`);
+    el.setAttribute('stroke',far?'var(--grid-far)':'var(--grid)');
+    el.setAttribute('stroke-width','0.8');el.setAttribute('fill','none');
+    svg.appendChild(el);
+  }
+  function buildRoom(){
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+    const W=ROOM.w/2,H=ROOM.h/2,nz=ROOM.nearZ,fz=ROOM.nearZ+ROOM.depth;
+    // depth grid lines (edges receding)
+    const corners=[[-W,-H],[W,-H],[W,H],[-W,H]];
+    corners.forEach(c=>line(c[0],c[1],nz,c[0],c[1],fz,false));
+    // near & far rectangles + intermediate rings
+    const rings=6;
+    for(let i=0;i<=rings;i++){
+      const z=nz+(fz-nz)*(i/rings), far=i>rings*0.55;
+      line(-W,-H,z, W,-H,z, far); line(W,-H,z, W,H,z, far);
+      line(W,H,z, -W,H,z, far);  line(-W,H,z, -W,-H,z, far);
+    }
+    // floor cross lines for depth feel
+    for(let gx=-W+0.4;gx<W;gx+=0.45){ line(gx,-H,nz, gx,-H,fz, true); line(gx,H,nz, gx,H,fz, true); }
+    // axis crosshair through listener (eye level, center)
+    const ax=document.createElementNS(SVGNS,'path');
+    const c1=proj(-W,0,nz),c2=proj(W,0,nz);
+    ax.setAttribute('d',`M 0 ${VB.cy} L 400 ${VB.cy}`);
+    ax.setAttribute('stroke','rgba(127,212,255,.18)');ax.setAttribute('stroke-width','0.8');
+    svg.appendChild(ax);
+    const av=document.createElementNS(SVGNS,'path');
+    av.setAttribute('d',`M ${VB.cx} 0 L ${VB.cx} 360`);
+    av.setAttribute('stroke','rgba(127,212,255,.10)');av.setAttribute('stroke-width','0.8');
+    svg.appendChild(av);
+    // YOU marker (vanishing center = straight ahead)
+    const you=document.createElementNS(SVGNS,'circle');
+    const yp=proj(0,0,fz);
+    you.setAttribute('cx',yp.x);you.setAttribute('cy',yp.y);you.setAttribute('r',2.4);
+    you.setAttribute('fill','var(--you)');you.setAttribute('opacity','0.5');
+    svg.appendChild(you);
+    // group for dynamic source dots
+    const g=document.createElementNS(SVGNS,'g');g.setAttribute('id','dots');svg.appendChild(g);
+    drawDots();
+  }
+  const COL={L:'--L',R:'--R',M:'--M'}, GLOW={L:'--L-glow',R:'--R-glow',M:'--M-glow'};
+  function drawDots(){
+    const g=$('dots'); if(!g) return;
+    while(g.firstChild) g.removeChild(g.firstChild);
+    if(!placed) return;
+    sources().forEach(s=>{
+      const p=proj(s.wx,s.wy,s.wz);
+      const floor=proj(s.wx,-ROOM.h/2,s.wz);   // shadow on floor
+      const depthN=(s.wz-ROOM.nearZ)/ROOM.depth; // 0 near .. 1 far
+      const rad=Math.max(3,8.5*(1-depthN*0.55));
+      const op=(1-depthN*0.5).toFixed(2);
+      // stem (height indicator)
+      const stem=document.createElementNS(SVGNS,'line');
+      stem.setAttribute('x1',p.x);stem.setAttribute('y1',p.y);
+      stem.setAttribute('x2',floor.x);stem.setAttribute('y2',floor.y);
+      stem.setAttribute('stroke',`var(${GLOW[s.role]})`);stem.setAttribute('stroke-width','0.8');
+      stem.setAttribute('stroke-dasharray','2 2');stem.setAttribute('opacity','0.5');
+      g.appendChild(stem);
+      // floor shadow
+      const sh=document.createElementNS(SVGNS,'ellipse');
+      sh.setAttribute('cx',floor.x);sh.setAttribute('cy',floor.y);
+      sh.setAttribute('rx',rad*0.7);sh.setAttribute('ry',rad*0.25);
+      sh.setAttribute('fill',`var(${GLOW[s.role]})`);sh.setAttribute('opacity','0.18');
+      g.appendChild(sh);
+      // pulse when playing
+      if(playing){const pu=document.createElementNS(SVGNS,'circle');
+        pu.setAttribute('cx',p.x);pu.setAttribute('cy',p.y);pu.setAttribute('r',rad+3);
+        pu.setAttribute('fill','none');pu.setAttribute('stroke',`var(${COL[s.role]})`);
+        pu.setAttribute('stroke-width','1');pu.setAttribute('opacity','0.4');g.appendChild(pu);}
+      // dot
+      const dot=document.createElementNS(SVGNS,'circle');
+      dot.setAttribute('cx',p.x);dot.setAttribute('cy',p.y);dot.setAttribute('r',rad);
+      dot.setAttribute('fill',`var(${COL[s.role]})`);
+      dot.setAttribute('filter',`drop-shadow(0 0 6px var(${GLOW[s.role]}))`);
+      dot.setAttribute('opacity',op);
+      g.appendChild(dot);
+      if(s.role!=='M'){const tx=document.createElementNS(SVGNS,'text');
+        tx.setAttribute('x',p.x);tx.setAttribute('y',p.y+2.6);tx.setAttribute('text-anchor','middle');
+        tx.setAttribute('font-size','7');tx.setAttribute('font-weight','600');
+        tx.setAttribute('fill','#06070b');tx.setAttribute('font-family',"'JetBrains Mono',monospace");
+        tx.textContent=s.role;g.appendChild(tx);}
+    });
+  }
+
+  // ===== refresh + readout =====
+  function refresh(){
+    drawDots(); applyAudio(false);
+    const C=worldCenter();
+    const az=Math.round(Math.atan2(C.x, C.z)*180/Math.PI);
+    const dist=(Math.hypot(C.x,C.y,C.z)*ctrl.room).toFixed(1);
+    $('readout').innerHTML=`azimuth <b>${az}°</b><br>distance <b>${dist}</b><br>height <b>${Math.round(ctrl.height*100)}%</b>`;
+  }
+
+  // ===== pointer control on room =====
+  function setFromPointer(clientX,clientY){
+    const r=stage.getBoundingClientRect();
+    let u=(clientX-r.left)/r.width, v=(clientY-r.top)/r.height;
+    u=Math.max(0,Math.min(1,u)); v=Math.max(0,Math.min(1,v));
+    ctrl.x=(u-0.5)*2;            // -1..1 left/right
+    ctrl.depth=1-v;             // top=1(far) bottom=0(near) -> distance by drag
+    placed=true; $('hint').style.opacity='0';
+    refresh();
+  }
+  stage.addEventListener('touchstart',e=>{e.preventDefault();ensureCtx();
+    if(ctx.state==='suspended')ctx.resume();dragging=true;
+    const t=e.touches[0];setFromPointer(t.clientX,t.clientY);},{passive:false});
+  stage.addEventListener('touchmove',e=>{if(!dragging)return;e.preventDefault();
+    const t=e.touches[0];setFromPointer(t.clientX,t.clientY);},{passive:false});
+  stage.addEventListener('touchend',()=>{dragging=false;},{passive:false});
+  stage.addEventListener('mousedown',e=>{ensureCtx();if(ctx.state==='suspended')ctx.resume();
+    dragging=true;setFromPointer(e.clientX,e.clientY);});
+  window.addEventListener('mousemove',e=>{if(dragging)setFromPointer(e.clientX,e.clientY);});
+  window.addEventListener('mouseup',()=>{dragging=false;});
+
+  // ===== faders =====
+  $('fHeight').addEventListener('input',e=>{ctrl.height=e.target.value/100;$('vHeight').textContent=e.target.value+'%';placed=true;$('hint').style.opacity='0';refresh();});
+  $('fWidth').addEventListener('input',e=>{ctrl.width=e.target.value/100;$('vWidth').textContent=e.target.value+'%';refresh();});
+  $('fRoom').addEventListener('input',e=>{ctrl.room=parseFloat(e.target.value);$('vRoom').textContent=ctrl.room.toFixed(1)+' m';makeIR();refresh();});
+
+  // ===== rotation knobs (drag vertically) =====
+  function knob(el,key){
+    const ind=el.querySelector('.ind'), kv=el.querySelector('.kv');
+    function render(){const deg=ctrl[key];
+      ind.style.transform=`translateX(-50%) rotate(${deg}deg)`;           // raw angle -> continuous visual spin
+      kv.textContent=(((Math.round(deg)%360)+360)%360);}                  // display normalised 0-359
+    let startY=0,startV=0,active=false;
+    function down(y){active=true;startY=y;startV=ctrl[key];}
+    function move(y){if(!active)return;ctrl[key]=startV+(startY-y)*1.2;     // no clamp -> infinite rotation
+      render();refresh();}
+    el.addEventListener('touchstart',e=>{e.preventDefault();down(e.touches[0].clientY);},{passive:false});
+    el.addEventListener('touchmove',e=>{e.preventDefault();move(e.touches[0].clientY);},{passive:false});
+    el.addEventListener('touchend',()=>{active=false;});
+    el.addEventListener('mousedown',e=>{down(e.clientY);
+      const mm=ev=>move(ev.clientY),mu=()=>{active=false;window.removeEventListener('mousemove',mm);window.removeEventListener('mouseup',mu);};
+      window.addEventListener('mousemove',mm);window.addEventListener('mouseup',mu);});
+    // double tap resets
+    el.addEventListener('dblclick',()=>{ctrl[key]=0;render();refresh();});
+    render();
+  }
+  knob($('kYaw'),'yaw');knob($('kPitch'),'pitch');knob($('kRoll'),'roll');
+
+  // ===== file + transport =====
+  function setChannels(n){
+    channels=n;
+    const stereo=n===2;
+    badge.textContent=stereo?'STEREO · L / R':'MONO · 1 src';
+    badge.className='badge '+(stereo?'stereo':'mono');
+    $('fWidth').disabled=!stereo;
+    $('rotPanel').classList.toggle('dim',!stereo);
+  }
+  $('file').addEventListener('change',async e=>{
+    const file=e.target.files[0];if(!file)return;$('fname').textContent=file.name;ensureCtx();
+    if(ctx.state==='suspended')await ctx.resume();
+    try{const arr=await file.arrayBuffer();buffer=await ctx.decodeAudioData(arr.slice(0));
+      setChannels(buffer.numberOfChannels>=2?2:1);$('play').disabled=false;refresh();
+    }catch(err){$('fname').textContent='decode failed: '+(err.message||err);}
+  });
+  $('play').addEventListener('click',async()=>{
+    if(!buffer)return;ensureCtx();if(ctx.state==='suspended')await ctx.resume();
+    if(playing){try{srcNode.stop();}catch(_){}playing=false;$('play').textContent='▶ Play';
+      $('status').classList.remove('playing');$('status').innerHTML='<span class="dot"></span>PAUSED';drawDots();return;}
+    srcNode=ctx.createBufferSource();srcNode.buffer=buffer;srcNode.loop=true;
+    if(channels===2){splitter=ctx.createChannelSplitter(2);srcNode.connect(splitter);
+      splitter.connect(pL,0);splitter.connect(pR,1);}
+    else{srcNode.connect(pM);}
+    srcNode.start(0);playing=true;$('play').textContent='■ Stop';
+    $('status').classList.add('playing');$('status').innerHTML='<span class="dot"></span>PLAYING';drawDots();
+  });
+  $('reset').addEventListener('click',()=>{ctrl.x=0;ctrl.depth=0.45;placed=true;$('hint').style.opacity='0';refresh();});
+
+  // ===== init =====
+  buildRoom();
+  window.addEventListener('resize',buildRoom);
+})();
+</script>
+</body>
+</html>
