@@ -193,10 +193,12 @@
       p.refDistance=1;p.maxDistance=80;p.rolloffFactor=1.0;return p;};
     pM=mk();pL=mk();pR=mk();
     limiter=ctx.createDynamicsCompressor();
-    limiter.threshold.value=-3;limiter.knee.value=0;limiter.ratio.value=20;
-    limiter.attack.value=0.003;limiter.release.value=0.15;
+    limiter.threshold.value=-9;limiter.knee.value=6;limiter.ratio.value=8;
+    limiter.attack.value=0.005;limiter.release.value=0.2;
     limiter.connect(ctx.destination);
-    dry=ctx.createGain();dry.gain.value=1;dry.connect(limiter);
+    // L/R panner が同じdryへ合流すると振幅が加算されるため、
+    // コンプレッサーに入る前に-4dB程度のヘッドルームを確保する（電子ドラム等の速い立ち上がりでの瞬間クリップ対策）
+    dry=ctx.createGain();dry.gain.value=0.6;dry.connect(limiter);
     send=ctx.createGain();send.gain.value=0.15;
     conv=ctx.createConvolver();wet=ctx.createGain();wet.gain.value=0.18;
     send.connect(conv);conv.connect(wet).connect(limiter);
