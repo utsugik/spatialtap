@@ -54,7 +54,6 @@
   .cross.h{left:0;right:0;top:50%;height:1px}
   .cross.v{top:0;bottom:0;left:50%;width:1px}
   .dot{position:absolute;border-radius:50%;transform:translate(-50%,-50%);
-    transition:left .18s cubic-bezier(.16,1,.3,1),top .18s cubic-bezier(.16,1,.3,1);
     display:flex;align-items:center;justify-content:center;opacity:0}
   .dot.on{opacity:1}
   .dot span{font-size:9px;font-weight:600;color:#06070b;font-family:'JetBrains Mono',monospace}
@@ -174,7 +173,7 @@
   let placed=false, dragging=false, playing=false;
 
   const AC=window.AudioContext||window.webkitAudioContext;
-  let ctx=null, pM=null,pL=null,pR=null, dry=null,conv=null,wet=null,send=null,limiter=null,distComp=null, splitter=null;
+  let ctx=null, pM=null,pL=null,pR=null, dry=null,conv=null,wet=null,send=null,limiter=null,distComp=null,flyGain=null, splitter=null;
   let audioBuffer=null, srcNode=null, activeNode=null;
   let mediaSrc=null, mediaReady=false, useElementAudio=false;
   let roomDebTimer=null;
@@ -183,6 +182,17 @@
   const DIST_MIN=0.4, DIST_MAX=100, DIST_POS_MAX=1000;
   const distFromPos=pos=>DIST_MIN*Math.pow(DIST_MAX/DIST_MIN,pos/DIST_POS_MAX);
   const posFromDist=d=>DIST_POS_MAX*Math.log(d/DIST_MIN)/Math.log(DIST_MAX/DIST_MIN);
+
+  // フライバイ移動: タップ位置(ctrl.u/v =目標)へ、表示位置(dispU/dispV)が毎フレーム指数関数的に追従する。
+  // 「誇張された体験」(HANDOFF 2章)の一環。ピッチは変えず、位置の弧＋わずかな音量ディップだけで「飛んでいく」感を出す。
+  let dispU=0.5, dispV=0.5, flyLastT=null, flyDist=0;
+  const FLY_TAU=0.11;   // 追従の時定数。約0.3秒でほぼ収束する
+  const FLY_ARC=0.07;   // 弧の最大盛り上がり量（画面比率）
+  const FLY_DIP=0.15;   // 飛行中の音量ディップ量（0-1、大きいほど飛行中に音が絞られる）
+  function flyingPos(){
+    const bump=Math.min(FLY_ARC,flyDist*0.6);
+    return {u:dispU, v:Math.max(0,Math.min(1,dispV-bump))};
+  }
 
   const $=id=>document.getElementById(id);
   const stage=$('stage'), vid=$('vid');
@@ -210,7 +220,9 @@
     send.connect(conv);conv.connect(wet).connect(limiter);
     // distComp: PannerNode自身の距離減衰(1/d)を遠距離側だけ補償し、100mでも完全無音にしない
     distComp=ctx.createGain();distComp.gain.value=1;
-    distComp.connect(dry);distComp.connect(send);
+    // flyGain: フライバイ移動中だけ音量をわずかに絞り、ピッチを変えずに「動いている感」を出す
+    flyGain=ctx.createGain();flyGain.gain.value=1;
+    distComp.connect(flyGain);flyGain.connect(dry);flyGain.connect(send);
     [pM,pL,pR].forEach(p=>{p.connect(distComp);});
     splitter=ctx.createChannelSplitter(2);
     const L=ctx.listener,t=ctx.currentTime;
@@ -246,7 +258,8 @@
     return {x:x3,y:y3,z:z3};
   }
   function center(){
-    const az=(ctrl.u-0.5)*Math.PI, el=(0.5-ctrl.v)*Math.PI*0.5, r=ctrl.dist, ce=Math.cos(el);
+    const p=flyingPos();
+    const az=(p.u-0.5)*Math.PI, el=(0.5-p.v)*Math.PI*0.5, r=ctrl.dist, ce=Math.cos(el);
     return {x:r*ce*Math.sin(az), y:r*Math.sin(el), zf:r*ce*Math.cos(az), az, el};
   }
   function applyAudio(immediate){
@@ -259,6 +272,7 @@
     else{setP(pM,C.x,C.y,C.zf);}
     updateSend(immediate);
     updateDistComp(immediate);
+    updateFlyGain(immediate);
   }
   function updateSend(immediate){
     if(!send) return;
@@ -275,17 +289,25 @@
     const t=ctx.currentTime,tc=immediate?0.001:0.08;
     distComp.gain.setTargetAtTime(comp,t,tc);
   }
+  function updateFlyGain(immediate){
+    if(!flyGain) return;
+    const speedNorm=Math.min(1,flyDist/0.12); // 目標までの残り距離を正規化(0.12=典型的な1タップ分の目安)
+    const g=1-FLY_DIP*speedNorm;
+    const t=ctx.currentTime,tc=immediate?0.02:0.06;
+    flyGain.gain.setTargetAtTime(g,t,tc);
+  }
   function updateDots(){
     const o=rotOffset(), clamp=n=>Math.max(0,Math.min(1,n));
+    const p=flyingPos();
     const M=$('dotM'),Ld=$('dotL'),Rd=$('dotR');
     M.classList.toggle('on',placed&&!ctrl.stereo);
     Ld.classList.toggle('on',placed&&ctrl.stereo);
     Rd.classList.toggle('on',placed&&ctrl.stereo);
     [M,Ld,Rd].forEach(d=>d.classList.toggle('pulse',playing&&d.classList.contains('on')));
     if(ctrl.stereo){
-      Ld.style.left=clamp(ctrl.u-o.x*SCN)*100+'%'; Ld.style.top=clamp(ctrl.v+o.y*SCN)*100+'%';
-      Rd.style.left=clamp(ctrl.u+o.x*SCN)*100+'%'; Rd.style.top=clamp(ctrl.v-o.y*SCN)*100+'%';
-    } else {M.style.left=ctrl.u*100+'%'; M.style.top=ctrl.v*100+'%';}
+      Ld.style.left=clamp(p.u-o.x*SCN)*100+'%'; Ld.style.top=clamp(p.v+o.y*SCN)*100+'%';
+      Rd.style.left=clamp(p.u+o.x*SCN)*100+'%'; Rd.style.top=clamp(p.v-o.y*SCN)*100+'%';
+    } else {M.style.left=p.u*100+'%'; M.style.top=p.v*100+'%';}
   }
   function refresh(){
     updateDots(); applyAudio(false);
@@ -293,6 +315,19 @@
     $('readout').innerHTML=`azimuth <b>${Math.round(C.az*180/Math.PI)}°</b><br>`+
       `elevation <b>${Math.round(C.el*180/Math.PI)}°</b><br>distance <b>${ctrl.dist.toFixed(1)}</b>`;
   }
+
+  // ---------- フライバイ移動: dispU/dispV を毎フレーム目標(ctrl.u/v)へ指数関数的に追従させる ----------
+  function flyStep(ts){
+    if(flyLastT==null) flyLastT=ts;
+    const dt=Math.min(0.05,(ts-flyLastT)/1000); flyLastT=ts;
+    const k=1-Math.exp(-dt/FLY_TAU);
+    const du=ctrl.u-dispU, dv=ctrl.v-dispV;
+    dispU+=du*k; dispV+=dv*k;
+    flyDist=Math.hypot(du,dv);
+    refresh();
+    requestAnimationFrame(flyStep);
+  }
+  requestAnimationFrame(flyStep);
 
   // ---------- stage pointer (place sound) ----------
   function fromPointer(cx,cy){
