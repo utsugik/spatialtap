@@ -105,7 +105,9 @@
 
   .deck{flex-shrink:0;background:var(--panel);
     padding:11px 14px 14px;display:flex;flex-direction:column;gap:11px}
-  .faders{display:flex;flex-direction:column;gap:9px}
+  /* Distanceフェーダーは非表示(距離操作は2本指ピンチに一本化)。要素自体はJS(値の反映・塗りつぶし更新)が
+     引き続き参照するためDOMには残し、表示のみ消す。 */
+  .faders{display:none}
   .fader{display:flex;align-items:center;gap:12px}
   .fader .lab{font-size:11px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;width:62px;flex-shrink:0;font-weight:700}
   .fader .val{font-size:12px;color:rgba(243,238,248,.85);letter-spacing:.02em;width:54px;text-align:right;flex-shrink:0;font-weight:700}
@@ -118,21 +120,28 @@
     background:radial-gradient(circle at 38% 30%,#3a3358,#1b1728 72%);
     box-shadow:0 0 0 4px rgba(235,169,200,.2),0 2px 6px rgba(0,0,0,.4)}
 
-  .rot{display:flex;justify-content:space-around;align-items:flex-start;gap:8px;padding-top:11px}
+  /* 下段: 俯瞰図(左カード) + 回転ノブ(右カード)を横並びに */
+  .bottom{display:flex;gap:12px;align-items:stretch}
+  .card{border-radius:18px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}
+  .card--map{flex:0 0 120px;padding:8px 8px 4px;display:flex;align-items:center}
+  .card--map svg{display:block;width:100%}
+  .card--knobs{flex:1;padding:10px 6px;display:flex;justify-content:space-around;align-items:center}
+
+  .rot{display:flex;justify-content:space-around;align-items:center;gap:6px;width:100%}
   .rot.dim{opacity:.32;pointer-events:none}
-  .rotlab{font-size:11px;letter-spacing:.2em;color:var(--muted);text-transform:uppercase;text-align:center;margin-bottom:7px;font-weight:700}
+  .rotlab{font-size:10px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase;text-align:center;margin-top:7px;font-weight:700}
   .knobwrap{display:flex;flex-direction:column;align-items:center}
-  .knob{width:64px;height:64px;border-radius:50%;position:relative;cursor:ns-resize;
+  .knob{width:50px;height:50px;border-radius:50%;position:relative;cursor:ns-resize;
     background:radial-gradient(circle at 38% 32%,#3a3358,#1b1728 72%);
     border:1px solid var(--line2);box-shadow:inset 0 2px 5px rgba(255,255,255,.10),inset 0 -3px 6px rgba(0,0,0,.5),0 6px 14px rgba(0,0,0,.42);
     touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   .knob::before{content:'';position:absolute;inset:-4px;border-radius:50%;z-index:-1;pointer-events:none;
-    background:conic-gradient(from 210deg,var(--you) 0deg 120deg,rgba(255,255,255,.06) 120deg 360deg)}
+    background:conic-gradient(from 220deg,var(--you) 0deg 258deg,rgba(255,255,255,.07) 258deg 360deg)}
   .knob.grab{border-color:var(--you)}
   .knob *{pointer-events:none}
-  .knob .ind{position:absolute;left:50%;top:6px;width:2px;height:18px;background:var(--you);
-    border-radius:2px;transform-origin:50% 26px;transform:translateX(-50%) rotate(0deg);box-shadow:0 0 6px var(--you-glow)}
-  .knob .kv{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}
+  .knob .ind{position:absolute;left:50%;top:5px;width:2px;height:14px;background:var(--you);
+    border-radius:2px;transform-origin:50% 20px;transform:translateX(-50%) rotate(0deg);box-shadow:0 0 6px var(--you-glow)}
+  .knob .kv{display:none}
 </style>
 </head>
 <body>
@@ -172,10 +181,44 @@
     <div class="fader"><span class="lab">Distance</span>
       <input type="range" id="fDist" min="0" max="1000" step="1" value="365"><span class="val" id="vDist">36%</span></div>
   </div>
-  <div class="rot" id="rotPanel">
-    <div class="knobwrap"><div class="rotlab">yaw</div><div class="knob" id="kYaw"><div class="ind"></div><div class="kv">0</div></div></div>
-    <div class="knobwrap"><div class="rotlab">pitch</div><div class="knob" id="kPitch"><div class="ind"></div><div class="kv">0</div></div></div>
-    <div class="knobwrap"><div class="rotlab">roll</div><div class="knob" id="kRoll"><div class="ind"></div><div class="kv">0</div></div></div>
+  <div class="bottom">
+    <!-- 俯瞰図: 土星の輪くらいの傾きで、中央のリスナーを囲んで前後左右に空間が広がる。
+         点(L/R/M)は既存のcenter()/rotOffset()の座標からリアルタイムに計算して描画する（updateOverheadMap()）。
+         今回は前方のみ対応。背後(人型の手前側)の空間はまだ操作が来ないが、絵としては用意してある。 -->
+    <div class="card card--map">
+      <svg viewBox="0 0 120 96">
+        <ellipse cx="60" cy="50" rx="52" ry="22" fill="rgba(255,255,255,.04)" stroke="rgba(243,238,248,.22)" stroke-width="1"/>
+        <ellipse cx="60" cy="50" rx="28" ry="12" fill="none" stroke="rgba(243,238,248,.12)" stroke-width="1"/>
+        <ellipse cx="60" cy="50" rx="7.5" ry="2.4" fill="rgba(0,0,0,.28)"/>
+        <circle cx="60" cy="39" r="3.3" fill="rgba(243,238,248,.62)"/>
+        <path d="M54,50 C54,40 56.5,38 60,38 C63.5,38 66,40 66,50 Z" fill="rgba(243,238,248,.5)"/>
+        <g id="mapGroupM">
+          <ellipse id="mapShadowM" rx="5.5" ry="1.8" fill="rgba(0,0,0,.28)"/>
+          <line id="mapStemM" stroke="rgba(255,177,61,.6)" stroke-width="1.4" stroke-dasharray="1.5 2.5"/>
+          <circle id="mapGlowM" r="6" fill="rgba(255,177,61,.2)"/>
+          <circle id="mapDotM" r="3.8" fill="#ffb13d"/>
+        </g>
+        <g id="mapGroupL">
+          <ellipse id="mapShadowL" rx="6" ry="2" fill="rgba(0,0,0,.28)"/>
+          <line id="mapStemL" stroke="rgba(159,227,207,.6)" stroke-width="1.4" stroke-dasharray="1.5 2.5"/>
+          <circle id="mapGlowL" r="6.5" fill="rgba(159,227,207,.2)"/>
+          <circle id="mapDotL" r="4" fill="#9fe3cf"/>
+        </g>
+        <g id="mapGroupR">
+          <ellipse id="mapShadowR" rx="5.5" ry="1.8" fill="rgba(0,0,0,.28)"/>
+          <line id="mapStemR" stroke="rgba(246,182,209,.6)" stroke-width="1.4" stroke-dasharray="1.5 2.5"/>
+          <circle id="mapGlowR" r="6" fill="rgba(246,182,209,.2)"/>
+          <circle id="mapDotR" r="3.8" fill="#f6b6d1"/>
+        </g>
+      </svg>
+    </div>
+    <div class="card card--knobs">
+      <div class="rot" id="rotPanel">
+        <div class="knobwrap"><div class="knob" id="kYaw"><div class="ind"></div><div class="kv">0</div></div><div class="rotlab">yaw</div></div>
+        <div class="knobwrap"><div class="knob" id="kPitch"><div class="ind"></div><div class="kv">0</div></div><div class="rotlab">pitch</div></div>
+        <div class="knobwrap"><div class="knob" id="kRoll"><div class="ind"></div><div class="kv">0</div></div><div class="rotlab">roll</div></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -394,9 +437,35 @@
       Rd.style.left=clamp(p.u+o.x*SCN)*100+'%'; Rd.style.top=clamp(p.v-o.y*SCN)*100+'%';
     } else {M.style.left=p.u*100+'%'; M.style.top=p.v*100+'%';}
   }
+  // 俯瞰図: 音源の位置(center()/rotOffset()と同じ座標)を土星の輪のようなタイル楕円へ投影して描画する。
+  // 半径は既存のdepthOf(ctrl.dist)を流用(誇張カーブと一貫させる)。高さ(縦線の長さ)はel(仰角)から算出。
+  // 今回は前方(|az|<=90°)のみ対応のため、azはその範囲にクランプしている(背後の描画は次段階)。
+  const MAP_CX=60, MAP_CY=50, MAP_RX=48, MAP_RY=19;
+  const MAP_STEM_MIN=5, MAP_STEM_MAX=20;
+  function updateOverheadMap(){
+    const depthC=depthOf(ctrl.dist);
+    const C=center(), o=rotOffset();
+    const elNorm=Math.max(-1,Math.min(1,C.el/(Math.PI/4)));
+    const stemH=MAP_STEM_MIN+(elNorm+1)/2*(MAP_STEM_MAX-MAP_STEM_MIN);
+    function place(id,x,zf){
+      const az=Math.max(-Math.PI/2,Math.min(Math.PI/2,Math.atan2(x,zf)));
+      const sx=MAP_CX+depthC*MAP_RX*Math.sin(az), sy=MAP_CY+depthC*MAP_RY*Math.cos(az);
+      $('mapShadow'+id).setAttribute('cx',sx); $('mapShadow'+id).setAttribute('cy',sy);
+      $('mapStem'+id).setAttribute('x1',sx); $('mapStem'+id).setAttribute('y1',sy);
+      $('mapStem'+id).setAttribute('x2',sx); $('mapStem'+id).setAttribute('y2',sy-stemH);
+      $('mapGlow'+id).setAttribute('cx',sx); $('mapGlow'+id).setAttribute('cy',sy-stemH);
+      $('mapDot'+id).setAttribute('cx',sx); $('mapDot'+id).setAttribute('cy',sy-stemH);
+    }
+    const showM=placed&&!ctrl.stereo, showLR=placed&&ctrl.stereo;
+    $('mapGroupM').style.display=showM?'':'none';
+    $('mapGroupL').style.display=showLR?'':'none';
+    $('mapGroupR').style.display=showLR?'':'none';
+    if(showM) place('M',C.x,C.zf);
+    if(showLR){ place('L',C.x-o.x,C.zf-o.z); place('R',C.x+o.x,C.zf+o.z); }
+  }
   function refresh(){
     if(orbit) return; // オービット中は専用の描画(orbitStep)に任せる。通常経路とは競合させない。
-    updateDots(); applyAudio(false);
+    updateDots(); applyAudio(false); updateOverheadMap();
     const C=center();
     $('readout').innerHTML=`azimuth <b>${Math.round(C.az*180/Math.PI)}°</b><br>`+
       `elevation <b>${Math.round(C.el*180/Math.PI)}°</b><br>distance <b>${ctrl.dist.toFixed(1)}</b>`;
