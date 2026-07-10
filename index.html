@@ -146,8 +146,6 @@
   <div class="faders">
     <div class="fader"><span class="lab">Distance</span>
       <input type="range" id="fDist" min="0" max="1000" step="1" value="365"><span class="val" id="vDist">3.0 m</span></div>
-    <div class="fader"><span class="lab">Width</span>
-      <input type="range" id="fWidth" min="0" max="100" step="1" value="50"><span class="val" id="vWidth">50%</span></div>
     <div class="fader"><span class="lab">Room</span>
       <input type="range" id="fRoom" min="1" max="20" step="0.5" value="6"><span class="val" id="vRoom">6.0 m</span></div>
   </div>
@@ -169,7 +167,7 @@
   document.getElementById('dbgbtn').addEventListener('click',()=>dbgEl.classList.toggle('on'));
   log('init ok. tap LOG to hide.');
 
-  const ctrl={u:0.5,v:0.5,dist:3,width:0.5,room:6,yaw:0,pitch:0,roll:0,stereo:true};
+  const ctrl={u:0.5,v:0.5,dist:3,room:6,yaw:0,pitch:0,roll:0,stereo:true};
   let placed=false, dragging=false, playing=false;
 
   const AC=window.AudioContext||window.webkitAudioContext;
@@ -186,7 +184,8 @@
   // 奥行き軸(depth): 音量・高域減衰・残響・幅を1本のカーブで駆動する（HANDOFF 2章「誇張された体験」）。
   // 0=最も近い(0.4m) 〜 1=最も遠い(100m)。距離の対数比率(raw)を、さらに前寄せカーブ(1-(1-raw)^N)で誇張し、
   // 近距離側の変化を大きく感じさせる。Nが大きいほど誇張が強い＝実機で聴いて調整する前提の初期値。
-  const DEPTH_EXAG_N=1.5;
+  // （2026-07-10 実機フィードバックにより1.5→3へ引き上げ。近距離2割の範囲に変化の大半が起きる誇張を狙う）
+  const DEPTH_EXAG_N=3;
   function depthOf(dist){
     const raw=Math.max(0,Math.min(1,Math.log(dist/DIST_MIN)/Math.log(DIST_MAX/DIST_MIN)));
     return 1-Math.pow(1-raw,DEPTH_EXAG_N);
@@ -266,8 +265,9 @@
     activeNode=node;
   }
   function rotOffset(widthMul=1){
-    // widthMul: 奥行きによる幅の誇張は音のみに適用し、見た目のドット幅は変えない（呼び出し側で使い分け）
-    const hw=ctrl.width*widthMul*1.5;
+    // widthMul: Widthフェーダーは廃止済み。常に100%を上限とし、奥行きによる自動収縮(音のみ)だけをwidthMulで表す
+    // （呼び出し側で使い分け: updateDots()は1=見た目は常に最大幅のまま、applyAudio()はwidthScaleFromDepth()で音だけ狭める）
+    const hw=widthMul*1.5;
     const ry=ctrl.yaw*Math.PI/180, rp=ctrl.pitch*Math.PI/180, rr=ctrl.roll*Math.PI/180;
     let x=hw,y=0,z=0;
     let x1=x*Math.cos(rr)-y*Math.sin(rr), y1=x*Math.sin(rr)+y*Math.cos(rr);
@@ -370,7 +370,6 @@
 
   // ---------- faders ----------
   $('fDist').addEventListener('input',e=>{ctrl.dist=distFromPos(parseFloat(e.target.value));$('vDist').textContent=ctrl.dist.toFixed(1)+' m';refresh();});
-  $('fWidth').addEventListener('input',e=>{ctrl.width=e.target.value/100;$('vWidth').textContent=e.target.value+'%';refresh();});
   $('fRoom').addEventListener('input',e=>{
     ctrl.room=parseFloat(e.target.value);$('vRoom').textContent=ctrl.room.toFixed(1)+' m';
     clearTimeout(roomDebTimer);roomDebTimer=setTimeout(makeIR,150);
@@ -409,7 +408,6 @@
     ctrl.stereo=on;
     $('badge').textContent=on?'STEREO':'MONO';
     $('badge').className='badge '+(on?'stereo':'mono');
-    $('fWidth').disabled=!on;
     $('rotPanel').classList.toggle('dim',!on);
     if(activeNode) connectSource(activeNode);
     refresh();
