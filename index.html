@@ -381,18 +381,61 @@
   }
   requestAnimationFrame(flyStep);
 
-  // ---------- stage pointer (place sound) ----------
+  // ---------- stage pointer (place sound / pinch = distance) ----------
   function fromPointer(cx,cy){
     const r=stage.getBoundingClientRect();
     ctrl.u=Math.max(0,Math.min(1,(cx-r.left)/r.width));
     ctrl.v=Math.max(0,Math.min(1,(cy-r.top)/r.height));
     placed=true; $('hint').style.opacity='0'; refresh();
   }
-  stage.addEventListener('pointerdown',e=>{ensureCtx();if(ctx&&ctx.state==='suspended')ctx.resume();
-    dragging=true;try{stage.setPointerCapture(e.pointerId);}catch(_){}fromPointer(e.clientX,e.clientY);});
-  stage.addEventListener('pointermove',e=>{if(dragging)fromPointer(e.clientX,e.clientY);});
-  stage.addEventListener('pointerup',()=>{dragging=false;});
-  stage.addEventListener('pointercancel',()=>{dragging=false;});
+  // ピンチでDistance(奥行き)を操作する。1本指=タップ/ドラッグで位置決め、2本指=ピンチで距離、という
+  // 指の本数で操作を切り分ける（同時誤認識を避けるため、2本目が触れた時点でドラッグを止める）。
+  const pinchPointers=new Map(); // pointerId -> {x,y}
+  let pinchStartFingerDist=0, pinchStartPos=0;
+  // PINCH_SENS: 指の開閉1pxあたりのDistanceポジション変化量(0-1000スケール)。
+  // 対数距離レンジ全体(0.4-100m)を1回の大きなピンチ(指の開閉幅 約330px)でほぼ走破できる値として3を初期値にした
+  // （開閉30pxで3m付近から約1.8-4.9mへ、100pxで約0.6-16mへ変化する検算に基づく。実機の操作感で調整前提）。
+  const PINCH_SENS=3;
+  stage.addEventListener('pointerdown',e=>{
+    ensureCtx();if(ctx&&ctx.state==='suspended')ctx.resume();
+    try{stage.setPointerCapture(e.pointerId);}catch(_){}
+    pinchPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pinchPointers.size===2){
+      dragging=false; // ピンチ開始。位置決めドラッグは中断する
+      const pts=[...pinchPointers.values()];
+      pinchStartFingerDist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+      pinchStartPos=posFromDist(ctrl.dist);
+      log('pinch start');
+    } else if(pinchPointers.size===1){
+      dragging=true;
+      fromPointer(e.clientX,e.clientY);
+    } else {
+      dragging=false; // 3本目以降は無視(位置・距離どちらの操作も更新しない)
+    }
+  });
+  stage.addEventListener('pointermove',e=>{
+    if(!pinchPointers.has(e.pointerId)) return;
+    pinchPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pinchPointers.size===2){
+      const pts=[...pinchPointers.values()];
+      const curDist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+      const newPos=Math.max(0,Math.min(DIST_POS_MAX,pinchStartPos+PINCH_SENS*(curDist-pinchStartFingerDist)));
+      ctrl.dist=distFromPos(newPos);
+      $('fDist').value=Math.round(newPos); $('vDist').textContent=ctrl.dist.toFixed(1)+' m';
+      refresh();
+    } else if(pinchPointers.size===1&&dragging){
+      fromPointer(e.clientX,e.clientY);
+    }
+  });
+  const stagePointerEnd=e=>{
+    pinchPointers.delete(e.pointerId);
+    if(pinchPointers.size===0) dragging=false;
+    else if(pinchPointers.size===1) dragging=true; // 2本→1本: 残った指でドラッグ再開
+  };
+  stage.addEventListener('pointerup',stagePointerEnd);
+  stage.addEventListener('pointercancel',stagePointerEnd);
+  // iOS Safari系の独自ジェスチャーイベント(touch-action:noneだけでは稀に防ぎきれない場合の保険)
+  ['gesturestart','gesturechange','gestureend'].forEach(t=>stage.addEventListener(t,e=>e.preventDefault()));
 
   // ---------- faders ----------
   $('fDist').addEventListener('input',e=>{ctrl.dist=distFromPos(parseFloat(e.target.value));$('vDist').textContent=ctrl.dist.toFixed(1)+' m';refresh();});
