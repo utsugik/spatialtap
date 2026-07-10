@@ -173,7 +173,7 @@
   let placed=false, dragging=false, playing=false;
 
   const AC=window.AudioContext||window.webkitAudioContext;
-  let ctx=null, pM=null,pL=null,pR=null, dry=null,conv=null,wet=null,send=null,limiter=null,distComp=null,flyGain=null, splitter=null;
+  let ctx=null, pM=null,pL=null,pR=null, dry=null,conv=null,wet=null,send=null,limiter=null,distComp=null,flyGain=null,lpFilter=null, splitter=null;
   let audioBuffer=null, srcNode=null, activeNode=null;
   let mediaSrc=null, mediaReady=false, useElementAudio=false;
   let roomDebTimer=null;
@@ -182,6 +182,21 @@
   const DIST_MIN=0.4, DIST_MAX=100, DIST_POS_MAX=1000;
   const distFromPos=pos=>DIST_MIN*Math.pow(DIST_MAX/DIST_MIN,pos/DIST_POS_MAX);
   const posFromDist=d=>DIST_POS_MAX*Math.log(d/DIST_MIN)/Math.log(DIST_MAX/DIST_MIN);
+
+  // 奥行き軸(depth): 音量・高域減衰・残響・幅を1本のカーブで駆動する（HANDOFF 2章「誇張された体験」）。
+  // 0=最も近い(0.4m) 〜 1=最も遠い(100m)。距離の対数比率(raw)を、さらに前寄せカーブ(1-(1-raw)^N)で誇張し、
+  // 近距離側の変化を大きく感じさせる。Nが大きいほど誇張が強い＝実機で聴いて調整する前提の初期値。
+  const DEPTH_EXAG_N=1.5;
+  function depthOf(dist){
+    const raw=Math.max(0,Math.min(1,Math.log(dist/DIST_MIN)/Math.log(DIST_MAX/DIST_MIN)));
+    return 1-Math.pow(1-raw,DEPTH_EXAG_N);
+  }
+  const DEPTH_VOL_FLOOR=0.1;   // -20dB相当。100mでも聞こえなくはしない（既存のdistCompフロアと同じ値）
+  const DEPTH_WIDTH_FAR=0.05;  // 最遠でもL/R幅を完全な1点にはしない
+  const DEPTH_LPF_NEAR=20000;  // 近距離での高域カットオフ(実質バイパス)
+  const DEPTH_LPF_FAR=1200;    // 最遠での高域カットオフ(こもるが不明瞭にはしない)
+  const DEPTH_SEND_MIN=0.15, DEPTH_SEND_MAX=1.0;
+  const widthScaleFromDepth=d=>1-d*(1-DEPTH_WIDTH_FAR);
 
   // フライバイ移動: タップ位置(ctrl.u/v =目標)へ、表示位置(dispU/dispV)が毎フレーム指数関数的に追従する。
   // 「誇張された体験」(HANDOFF 2章)の一環。ピッチは変えず、位置の弧＋わずかな音量ディップだけで「飛んでいく」感を出す。
@@ -218,11 +233,13 @@
     send=ctx.createGain();send.gain.value=0.15;
     conv=ctx.createConvolver();wet=ctx.createGain();wet.gain.value=0.18;
     send.connect(conv);conv.connect(wet).connect(limiter);
-    // distComp: PannerNode自身の距離減衰(1/d)を遠距離側だけ補償し、100mでも完全無音にしない
+    // distComp: PannerNode自身の距離減衰(1/d)を打ち消し、奥行き軸(depth)から決まる音量カーブに置き換える
     distComp=ctx.createGain();distComp.gain.value=1;
     // flyGain: フライバイ移動中だけ音量をわずかに絞り、ピッチを変えずに「動いている感」を出す
     flyGain=ctx.createGain();flyGain.gain.value=1;
-    distComp.connect(flyGain);flyGain.connect(dry);flyGain.connect(send);
+    // lpFilter: 奥行きが増すほど高域を削り、近い/遠いの一貫した奥行き感を強化する
+    lpFilter=ctx.createBiquadFilter();lpFilter.type='lowpass';lpFilter.Q.value=0.7;lpFilter.frequency.value=DEPTH_LPF_NEAR;
+    distComp.connect(flyGain);flyGain.connect(lpFilter);lpFilter.connect(dry);lpFilter.connect(send);
     [pM,pL,pR].forEach(p=>{p.connect(distComp);});
     splitter=ctx.createChannelSplitter(2);
     const L=ctx.listener,t=ctx.currentTime;
@@ -248,8 +265,9 @@
     else{node.connect(pM);}
     activeNode=node;
   }
-  function rotOffset(){
-    const hw=ctrl.width*1.5;
+  function rotOffset(widthMul=1){
+    // widthMul: 奥行きによる幅の誇張は音のみに適用し、見た目のドット幅は変えない（呼び出し側で使い分け）
+    const hw=ctrl.width*widthMul*1.5;
     const ry=ctrl.yaw*Math.PI/180, rp=ctrl.pitch*Math.PI/180, rr=ctrl.roll*Math.PI/180;
     let x=hw,y=0,z=0;
     let x1=x*Math.cos(rr)-y*Math.sin(rr), y1=x*Math.sin(rr)+y*Math.cos(rr);
@@ -264,30 +282,38 @@
   }
   function applyAudio(immediate){
     if(!ctx) return;
-    const C=center(), o=rotOffset();
+    const depthC=depthOf(ctrl.dist);
+    const C=center(), o=rotOffset(widthScaleFromDepth(depthC)); // 音のみ幅を奥行きで狭める（見た目のrotOffset()は別呼び出しで従来通り）
     const setP=(p,x,y,zf)=>{if(!p)return;const t=ctx.currentTime,tc=immediate?0.001:0.05;
       if(p.positionX){p.positionX.setTargetAtTime(x,t,tc);p.positionY.setTargetAtTime(y,t,tc);p.positionZ.setTargetAtTime(-zf,t,tc);}
       else p.setPosition(x,y,-zf);};
     if(ctrl.stereo){setP(pL,C.x-o.x,C.y-o.y,C.zf-o.z);setP(pR,C.x+o.x,C.y+o.y,C.zf+o.z);}
     else{setP(pM,C.x,C.y,C.zf);}
-    updateSend(immediate);
-    updateDistComp(immediate);
+    updateSend(immediate,depthC);
+    updateDistComp(immediate,depthC);
     updateFlyGain(immediate);
+    updateLowpass(immediate,depthC);
   }
-  function updateSend(immediate){
+  function updateSend(immediate,depthC){
     if(!send) return;
-    const distRatio=Math.max(0,Math.min(1,Math.log(ctrl.dist/DIST_MIN)/Math.log(DIST_MAX/DIST_MIN)));
-    const amt=0.15+distRatio*0.85;
+    const amt=DEPTH_SEND_MIN+depthC*(DEPTH_SEND_MAX-DEPTH_SEND_MIN);
     const t=ctx.currentTime,tc=immediate?0.001:0.08;
     send.gain.setTargetAtTime(amt,t,tc);
   }
-  function updateDistComp(immediate){
+  function updateDistComp(immediate,depthC){
     if(!distComp) return;
-    const FLOOR=0.1; // -20dB相当。遠距離でも「聞こえない」にはしない最低音量
+    // PannerNode自身の距離減衰(1/d)を打ち消したうえで、奥行きカーブに基づく音量(vol)へ置き換える
     const natural=ctrl.dist<=1?1:1/ctrl.dist; // PannerNode(refDistance=1,rolloffFactor=1)の減衰と同じ式
-    const comp=Math.max(1,FLOOR/natural); // naturalがfloorを下回る距離(=10m超)でのみ補償が働く。近距離側は常に1倍=変更なし
+    const vol=Math.pow(DEPTH_VOL_FLOOR,depthC); // depth=0で1(無変化)、depth=1でフロア値
+    const comp=vol/natural;
     const t=ctx.currentTime,tc=immediate?0.001:0.08;
     distComp.gain.setTargetAtTime(comp,t,tc);
+  }
+  function updateLowpass(immediate,depthC){
+    if(!lpFilter) return;
+    const hz=DEPTH_LPF_NEAR*Math.pow(DEPTH_LPF_FAR/DEPTH_LPF_NEAR,depthC);
+    const t=ctx.currentTime,tc=immediate?0.001:0.08;
+    lpFilter.frequency.setTargetAtTime(hz,t,tc);
   }
   function updateFlyGain(immediate){
     if(!flyGain) return;
