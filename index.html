@@ -9,19 +9,21 @@
 <title>Spatial Tap — Video</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,500&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,500&family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
+  /* Spatial Tap 専用のデザイン言語（HANDOFF 10章）: 他プロジェクトの計測器的な配色・等幅フォントとは
+     意図的に切り離し、「夜に浮かぶ親しみやすい体験」に寄せている（2026-07-10, HANDOFF 2章の設計思想に基づく）。 */
   :root{
     --bg:#06070b;--surface:#0e0f17;--panel:#0b0c13;--line:#1a1c28;--line2:#272a3b;
     --text:#e9eaf2;--muted:#5f6178;--muted2:#454862;
-    --L:#23d3c2;--L-glow:rgba(35,211,194,.6);
-    --R:#ff3d6e;--R-glow:rgba(255,61,110,.6);
+    --L:#5eead4;--L-glow:rgba(94,234,212,.5);
+    --R:#fb7185;--R-glow:rgba(251,113,133,.5);
     --M:#ffb13d;--M-glow:rgba(255,177,61,.6);
-    --you:#7fd4ff;--you-glow:rgba(127,212,255,.5);
+    --you:#c4b5fd;--you-glow:rgba(196,181,253,.45);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
   html,body{height:100%;background:var(--bg);color:var(--text);
-    font-family:'JetBrains Mono',ui-monospace,monospace;overflow:hidden;
+    font-family:'Zen Maru Gothic',sans-serif;overflow:hidden;
     overscroll-behavior:none;-webkit-font-smoothing:antialiased}
   body{display:flex;flex-direction:column;height:100vh;height:100dvh}
 
@@ -46,17 +48,20 @@
   .fname{margin-top:9px;font-size:10px;color:var(--muted);letter-spacing:.04em;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
+  /* 闇に浮かぶスクリーン: overflow:hiddenだと同一要素のbox-shadowも切り取られてしまうため、
+     stageにわずかな余白を持たせたうえでdrop-shadow(親のoverflowに影響されない)で外側に淡く発光させる。 */
   #stage{flex:1;position:relative;overflow:hidden;touch-action:none;background:#000;
-    user-select:none;-webkit-user-select:none;min-height:0}
+    user-select:none;-webkit-user-select:none;min-height:0;margin:10px;border-radius:6px;
+    filter:drop-shadow(0 0 20px rgba(196,181,253,.22)) drop-shadow(0 0 46px rgba(196,181,253,.14))}
   #vid{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
   #overlay{position:absolute;inset:0;pointer-events:none}
-  .cross{position:absolute;background:rgba(127,212,255,.14)}
+  .cross{position:absolute;background:rgba(196,181,253,.14)}
   .cross.h{left:0;right:0;top:50%;height:1px}
   .cross.v{top:0;bottom:0;left:50%;width:1px}
   .dot{position:absolute;border-radius:50%;transform:translate(-50%,-50%);
     display:flex;align-items:center;justify-content:center;opacity:0}
   .dot.on{opacity:1}
-  .dot span{font-size:9px;font-weight:600;color:#06070b;font-family:'JetBrains Mono',monospace}
+  .dot span{font-size:9px;font-weight:600;color:#06070b;font-family:'Zen Maru Gothic',sans-serif}
   .dot.M{width:22px;height:22px;background:var(--M);box-shadow:0 0 16px var(--M-glow)}
   .dot.L{width:26px;height:26px;background:var(--L);box-shadow:0 0 16px var(--L-glow)}
   .dot.R{width:26px;height:26px;background:var(--R);box-shadow:0 0 16px var(--R-glow)}
@@ -66,8 +71,8 @@
 
   /* オービット中、ドットが背後(画面外)にある間の気配グロー */
   .edgeglow{position:absolute;top:0;bottom:0;width:28%;pointer-events:none;opacity:0}
-  .edgeglow.left{left:0;background:linear-gradient(to right,rgba(127,212,255,.6),rgba(127,212,255,0))}
-  .edgeglow.right{right:0;background:linear-gradient(to left,rgba(127,212,255,.6),rgba(127,212,255,0))}
+  .edgeglow.left{left:0;background:linear-gradient(to right,rgba(196,181,253,.6),rgba(196,181,253,0))}
+  .edgeglow.right{right:0;background:linear-gradient(to left,rgba(196,181,253,.6),rgba(196,181,253,0))}
 
   .status{position:absolute;top:12px;left:12px;font-size:10px;color:var(--muted);letter-spacing:.14em;pointer-events:none;text-shadow:0 1px 4px #000}
   .status .dot2{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--muted);margin-right:7px;vertical-align:middle}
