@@ -210,6 +210,11 @@
   // 表示は「m」ではなく0-100%（内部の距離計算・音響/視覚への影響は変更しない、表示のみ）。
   // 誇張された演出値であり物理的に正確な距離ではないため、単位付き数値による誤解を避ける（HANDOFF 2章）。
   const distPercentText=d=>Math.round(posFromDist(d)/DIST_POS_MAX*100)+'%';
+  // Distanceスライダーのつまみ左側をピンクで塗りつぶす表示。距離計算・音響ロジックには関与せず、見た目の反映のみ。
+  function updateDistFill(){
+    const pct=Math.round(posFromDist(ctrl.dist)/DIST_POS_MAX*100);
+    $('fDist').style.background=`linear-gradient(to right, var(--you) 0%, var(--you) ${pct}%, var(--line2) ${pct}%, var(--line2) 100%)`;
+  }
 
   // 奥行き軸(depth): 音量・高域減衰・残響・幅を1本のカーブで駆動する（HANDOFF 2章「誇張された体験」）。
   // 0=最も近い(0.4m) 〜 1=最も遠い(100m)。距離の対数比率(raw)を、さらに前寄せカーブ(1-(1-raw)^N)で誇張し、
@@ -256,6 +261,7 @@
   vid.muted=true; vid.loop=true; vid.playsInline=true; vid.setAttribute('playsinline','');
   $('fDist').value=Math.round(posFromDist(ctrl.dist));
   $('vDist').textContent=distPercentText(ctrl.dist);
+  updateDistFill();
 
   function setStatus(t,on){$('status').className='status'+(on?' playing':'');$('status').innerHTML='<span class="dot2"></span>'+t;}
 
@@ -549,7 +555,7 @@
       const curFingerDist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
       const newPos=Math.max(0,Math.min(DIST_POS_MAX,distStartPos+PINCH_SENS*(curFingerDist-distStartFingerDist)));
       ctrl.dist=distFromPos(newPos);
-      $('fDist').value=Math.round(newPos); $('vDist').textContent=distPercentText(ctrl.dist);
+      $('fDist').value=Math.round(newPos); $('vDist').textContent=distPercentText(ctrl.dist); updateDistFill();
     }
     refresh();
   });
@@ -568,16 +574,27 @@
   ['gesturestart','gesturechange','gestureend'].forEach(t=>stage.addEventListener(t,e=>e.preventDefault()));
 
   // ---------- faders ----------
-  $('fDist').addEventListener('input',e=>{ctrl.dist=distFromPos(parseFloat(e.target.value));$('vDist').textContent=distPercentText(ctrl.dist);refresh();});
+  $('fDist').addEventListener('input',e=>{ctrl.dist=distFromPos(parseFloat(e.target.value));$('vDist').textContent=distPercentText(ctrl.dist);updateDistFill();refresh();});
 
   // ---------- rotation knobs : robust pointer handling ----------
   function knob(el,key){
     const ind=el.querySelector('.ind'),kv=el.querySelector('.kv');
     function render(){ind.style.transform=`translateX(-50%) rotate(${ctrl[key]}deg)`;
       kv.textContent=(((Math.round(ctrl[key])%360)+360)%360);}
-    let sy=0,sv=0,active=false,pid=null;
+    let sy=0,sv=0,active=false,pid=null,lastTapT=0;
+    // ダブルタップ/ダブルクリックで0にリセット。pointerdownでpreventDefault()しているため
+    // click/dblclickの合成イベントがiOS等では発火しないことがあり、pointerdownの間隔で自前判定する。
+    const DBLTAP_MS=350;
     el.addEventListener('pointerdown',e=>{
       e.preventDefault();e.stopPropagation();
+      const now=performance.now();
+      if(now-lastTapT<DBLTAP_MS){
+        lastTapT=0;
+        ctrl[key]=0; render(); refresh();
+        log(key,'dbltap reset to 0');
+        return; // ドラッグは開始しない
+      }
+      lastTapT=now;
       active=true;pid=e.pointerId;sy=e.clientY;sv=ctrl[key];el.classList.add('grab');
       try{el.setPointerCapture(e.pointerId);}catch(_){}
       log(key,'grab @',Math.round(e.clientY));
@@ -592,7 +609,6 @@
     el.addEventListener('pointerup',end);
     el.addEventListener('pointercancel',end);
     el.addEventListener('lostpointercapture',()=>{active=false;el.classList.remove('grab');});
-    el.addEventListener('dblclick',()=>{ctrl[key]=0;render();refresh();});
     render();
   }
   knob($('kYaw'),'yaw');knob($('kPitch'),'pitch');knob($('kRoll'),'roll');
