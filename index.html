@@ -238,7 +238,7 @@
   });
   log('init ok. tap LOG to hide.');
 
-  const ctrl={u:0.5,v:0.5,dist:3,yaw:0,pitch:0,roll:0,stereo:true};
+  const ctrl={u:0.5,v:0.5,dist:3,yaw:0,pitch:0,roll:0,stereo:true,behind:0};
   let placed=false, playing=false;
 
   const AC=window.AudioContext||window.webkitAudioContext;
@@ -289,7 +289,7 @@
 
   // フライバイ移動: タップ位置(ctrl.u/v =目標)へ、表示位置(dispU/dispV)が毎フレーム指数関数的に追従する。
   // 「誇張された体験」(HANDOFF 2章)の一環。ピッチは変えず、位置の弧＋わずかな音量ディップだけで「飛んでいく」感を出す。
-  let dispU=0.5, dispV=0.5, flyLastT=null, flyDist=0;
+  let dispU=0.5, dispV=0.5, dispBehind=0, flyLastT=null, flyDist=0;
   const FLY_TAU=0.11;   // 追従の時定数。約0.3秒でほぼ収束する
   const FLY_ARC=0.07;   // 弧の最大盛り上がり量（画面比率）
   const FLY_DIP=0.15;   // 飛行中の音量ディップ量（0-1、大きいほど飛行中に音が絞られる）
@@ -370,7 +370,12 @@
   }
   function center(){
     const p=flyingPos();
-    const az=(p.u-0.5)*Math.PI, el=(0.5-p.v)*Math.PI*0.5, r=ctrl.dist, ce=Math.cos(el);
+    // frontAz: 画面内の左右位置だけによる方位(±90°)。dispBehind(0-1、フライバイと同じ補間で追従)が
+    // 増えるほど、同じ側(sgn)のまま±180°(真後ろ)まで連続的に回り込む(引き寄せ・追い越し方式)。
+    const frontAz=(p.u-0.5)*Math.PI;
+    const sgn=frontAz===0?1:Math.sign(frontAz);
+    const az=frontAz+sgn*dispBehind*(Math.PI-Math.abs(frontAz));
+    const el=(0.5-p.v)*Math.PI*0.5, r=ctrl.dist, ce=Math.cos(el);
     return {x:r*ce*Math.sin(az), y:r*Math.sin(el), zf:r*ce*Math.cos(az), az, el};
   }
   function applyAudio(immediate){
@@ -415,9 +420,21 @@
     const t=ctx.currentTime,tc=immediate?0.02:0.06;
     flyGain.gain.setTargetAtTime(g,t,tc);
   }
+  // 気配グロー(画面端の発光): 方位が前方半球(|az|<=90°)かどうかで、ドット表示 or 端の発光に切り替える。
+  // オービット(orbitStep)と自由配置の背後(updateDots)の両方から使う共通ロジック。
+  function applyEdgeGlow(az){
+    const azN=((az+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+    const front=Math.abs(azN)<=Math.PI/2;
+    if(front){ $('edgeL').style.opacity=0; $('edgeR').style.opacity=0; return true; }
+    const intensity=Math.min(1,(Math.abs(azN)-Math.PI/2)/(Math.PI/2));
+    if(azN>0){ $('edgeR').style.opacity=intensity; $('edgeL').style.opacity=0; }
+    else{ $('edgeL').style.opacity=intensity; $('edgeR').style.opacity=0; }
+    return false;
+  }
   function updateDots(){
     const o=rotOffset(), clamp=n=>Math.max(0,Math.min(1,n));
     const p=flyingPos();
+    const front=applyEdgeGlow(center().az); // 背後(|az|>90°)なら画面にドットは描けない
     const M=$('dotM'),Ld=$('dotL'),Rd=$('dotR');
     M.classList.toggle('on',placed&&!ctrl.stereo);
     Ld.classList.toggle('on',placed&&ctrl.stereo);
@@ -430,7 +447,7 @@
       const px=DOT_BASE_PX[key]*dv.scale;
       el.style.width=px+'px'; el.style.height=px+'px';
       el.style.filter='blur('+dv.blur.toFixed(2)+'px)';
-      el.style.opacity=el.classList.contains('on')?dv.op:0;
+      el.style.opacity=(front&&el.classList.contains('on'))?dv.op:0;
     });
     if(ctrl.stereo){
       Ld.style.left=clamp(p.u-o.x*SCN)*100+'%'; Ld.style.top=clamp(p.v+o.y*SCN)*100+'%';
@@ -438,18 +455,19 @@
     } else {M.style.left=p.u*100+'%'; M.style.top=p.v*100+'%';}
   }
   // 俯瞰図: 音源の位置(center()/rotOffset()と同じ座標)を土星の輪のようなタイル楕円へ投影して描画する。
-  // 半径は既存のdepthOf(ctrl.dist)を流用(誇張カーブと一貫させる)。高さ(縦線の長さ)はel(仰角)から算出。
-  // 今回は前方(|az|<=90°)のみ対応のため、azはその範囲にクランプしている(背後の描画は次段階)。
+  // 半径は既存のdepthOf(ctrl.dist)を流用(誇張カーブと一貫させる)。方位は±180°(背後)まで対応する。
+  // 前方=奥(楕円の上側)、背後=手前(楕円の下側)。高さ(縦線)はel(仰角)を符号付きで反映し、上下どちらにも伸びる。
   const MAP_CX=60, MAP_CY=50, MAP_RX=48, MAP_RY=19;
-  const MAP_STEM_MIN=5, MAP_STEM_MAX=20;
+  const MAP_STEM_MIN=4, MAP_STEM_MAX=26;
   function updateOverheadMap(){
     const depthC=depthOf(ctrl.dist);
     const C=center(), o=rotOffset();
     const elNorm=Math.max(-1,Math.min(1,C.el/(Math.PI/4)));
-    const stemH=MAP_STEM_MIN+(elNorm+1)/2*(MAP_STEM_MAX-MAP_STEM_MIN);
+    const stemSign=elNorm===0?1:Math.sign(elNorm);
+    const stemH=stemSign*(MAP_STEM_MIN+Math.abs(elNorm)*(MAP_STEM_MAX-MAP_STEM_MIN));
     function place(id,x,zf){
-      const az=Math.max(-Math.PI/2,Math.min(Math.PI/2,Math.atan2(x,zf)));
-      const sx=MAP_CX+depthC*MAP_RX*Math.sin(az), sy=MAP_CY+depthC*MAP_RY*Math.cos(az);
+      const az=Math.atan2(x,zf); // -180..180、クランプなし(背後も正しく投影する)
+      const sx=MAP_CX+depthC*MAP_RX*Math.sin(az), sy=MAP_CY-depthC*MAP_RY*Math.cos(az);
       $('mapShadow'+id).setAttribute('cx',sx); $('mapShadow'+id).setAttribute('cy',sy);
       $('mapStem'+id).setAttribute('x1',sx); $('mapStem'+id).setAttribute('y1',sy);
       $('mapStem'+id).setAttribute('x2',sx); $('mapStem'+id).setAttribute('y2',sy-stemH);
@@ -504,12 +522,11 @@
     if(ctrl.stereo){setP(pL,C.x-o.x,C.y-o.y,C.zf-o.z);setP(pR,C.x+o.x,C.y+o.y,C.zf+o.z);}
     else{setP(pM,C.x,C.y,C.zf);}
     updateSend(false,depthC); updateDistComp(false,depthC); updateLowpass(false,depthC);
-    // 方位を-180〜180°に正規化。前方半球(|az|<=90°)ならドット、それ以外は背後=画面端グロー。
-    let azN=((az+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
-    const front=Math.abs(azN)<=Math.PI/2;
-    const M=$('dotM'),Ld=$('dotL'),Rd=$('dotR'),glowL=$('edgeL'),glowR=$('edgeR');
+    // 前方半球(|az|<=90°)ならドット、それ以外は背後=画面端グロー(applyEdgeGlowで共通判定)。
+    const front=applyEdgeGlow(az);
+    const M=$('dotM'),Ld=$('dotL'),Rd=$('dotR');
     if(front){
-      glowL.style.opacity=0; glowR.style.opacity=0;
+      const azN=((az+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
       const u=azN/Math.PI+0.5, v=orbit.v0;
       const dv=dotVisualFromDepth(depthC), clamp=n=>Math.max(0,Math.min(1,n));
       [['M',M],['L',Ld],['R',Rd]].forEach(([key,el2])=>{
@@ -529,9 +546,6 @@
       }
     } else {
       M.style.opacity=0; Ld.style.opacity=0; Rd.style.opacity=0;
-      const intensity=Math.min(1,(Math.abs(azN)-Math.PI/2)/(Math.PI/2));
-      if(azN>0){ glowR.style.opacity=intensity; glowL.style.opacity=0; }
-      else{ glowL.style.opacity=intensity; glowR.style.opacity=0; }
     }
   }
 
@@ -543,6 +557,7 @@
     const k=1-Math.exp(-dt/FLY_TAU);
     const du=ctrl.u-dispU, dv=ctrl.v-dispV;
     dispU+=du*k; dispV+=dv*k;
+    dispBehind+=(ctrl.behind-dispBehind)*k; // 背後への回り込みも同じ補間で滑らかに
     flyDist=Math.hypot(du,dv);
     refresh();
     requestAnimationFrame(flyStep);
@@ -564,11 +579,17 @@
     let sx=0,sy=0; pts.forEach(p=>{sx+=p.x;sy+=p.y;});
     return {x:sx/pts.length,y:sy/pts.length};
   }
+  // 背後配置(引き寄せ・追い越し方式): 下端(v=1)を超えてさらに引いた分(オーバーシュート)を
+  // BEHIND_PULL_RANGEで正規化し、ctrl.behind(0-1)とする。画面内(通常の縦ドラッグ=高さ)とは
+  // rawV<=1かどうかで自然に切り分かる(オーバーシュートがなければbehindは常に0)。
+  const BEHIND_PULL_RANGE=0.35;
   function applyTrackedPosition(){
     const c=trackedCentroid(); if(!c) return;
     const r=stage.getBoundingClientRect();
-    ctrl.u=Math.max(0,Math.min(1,(c.x-r.left)/r.width+posOffU));
-    ctrl.v=Math.max(0,Math.min(1,(c.y-r.top)/r.height+posOffV));
+    const rawU=(c.x-r.left)/r.width+posOffU, rawV=(c.y-r.top)/r.height+posOffV;
+    ctrl.u=Math.max(0,Math.min(1,rawU));
+    ctrl.v=Math.max(0,Math.min(1,rawV));
+    ctrl.behind=Math.max(0,Math.min(1,Math.max(0,rawV-1)/BEHIND_PULL_RANGE));
     placed=true; $('hint').style.opacity='0';
   }
   // ドットのダブルタップ判定(オービット起動): タップ座標が現在表示中のドット付近かを見る。
