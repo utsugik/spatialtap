@@ -155,6 +155,7 @@
     <label class="btn file-label">Load Video<input type="file" id="file" accept="video/*,.mov,.mp4,.m4v"></label>
     <button class="btn primary" id="play" disabled>▶ Play</button>
     <button class="btn" id="reset">Center</button>
+    <button class="btn" id="modeBtn">JUMP</button>
   </div>
   <div class="fname" id="fname">no video loaded</div>
 </header>
@@ -239,7 +240,7 @@
   log('init ok. tap LOG to hide.');
 
   const ctrl={u:0.5,v:0.5,dist:3,yaw:0,pitch:0,roll:0,stereo:true,behind:0};
-  let placed=false, playing=false;
+  let placed=true, playing=false; // 起動直後から初期位置(中央)にドットを表示する
 
   const AC=window.AudioContext||window.webkitAudioContext;
   let ctx=null, pM=null,pL=null,pR=null, dry=null,conv=null,wet=null,send=null,limiter=null,distComp=null,flyGain=null,lpFilter=null, splitter=null;
@@ -305,6 +306,7 @@
   $('fDist').value=Math.round(posFromDist(ctrl.dist));
   $('vDist').textContent=distPercentText(ctrl.dist);
   updateDistFill();
+  setDragMode('jump');
 
   function setStatus(t,on){$('status').className='status'+(on?' playing':'');$('status').innerHTML='<span class="dot2"></span>'+t;}
 
@@ -564,6 +566,16 @@
   }
   requestAnimationFrame(flyStep);
 
+  // ドット移動モード: JUMP=タップした場所へ絶対位置で瞬間移動(既存挙動)。DRAG=指の移動量だけ相対的に動く。
+  // DSpatial Reality VRのEdit Mode(Absolute/Relative)と同じ発想。ピンチ(距離)・背後配置(下端引き)は両モード共通。
+  let dragMode='jump';
+  function setDragMode(m){
+    dragMode=m;
+    $('modeBtn').textContent=m.toUpperCase();
+    $('modeBtn').classList.toggle('primary',m==='drag');
+  }
+  $('modeBtn').addEventListener('click',()=>setDragMode(dragMode==='jump'?'drag':'jump'));
+
   // ---------- stage pointer (1本指=位置、2本指=位置(重心)+距離(間隔)を同時操作) ----------
   // ルールはシンプルに統一: 触れている指の重心が常にXY位置を、2本指のときはさらに指の間隔がDistanceを駆動する。
   const pinchPointers=new Map(); // pointerId -> {x,y}
@@ -618,11 +630,12 @@
     try{stage.setPointerCapture(e.pointerId);}catch(_){}
     pinchPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
     const r=stage.getBoundingClientRect(), c=trackedCentroid();
-    if(wasEmpty){
-      // 完全に新しいタップ: オフセットなし(絶対位置)。既存の「タップ=その場に瞬間移動」を維持する。
+    if(wasEmpty&&dragMode==='jump'){
+      // JUMP: 完全に新しいタップはオフセットなし(絶対位置)。「タップ=その場に瞬間移動」。
       posOffU=0; posOffV=0;
     } else {
-      // 指の本数が変わった(1→2など): 現在のctrl.u/vを保ったままオフセットを再計算し、位置がジャンプしないようにする。
+      // DRAG: 新規タップでも現在位置を保つオフセットにする(=指が動いた分だけ相対的に動く)。
+      // 指の本数が変わった(1→2など)場合も同じ式でジャンプを防ぐ(JUMPモードと共通)。
       posOffU=ctrl.u-(c.x-r.left)/r.width;
       posOffV=ctrl.v-(c.y-r.top)/r.height;
     }
@@ -763,7 +776,7 @@
     }
     if(ctx.state==='suspended') ctx.resume();
     playing=true;$('play').textContent='■ Stop';setStatus('PLAYING',true);
-    if(!placed){placed=true;$('hint').style.opacity='0';}
+    $('hint').style.opacity='0';
     refresh();
   });
   $('reset').addEventListener('click',()=>{ctrl.u=0.5;ctrl.v=0.5;placed=true;$('hint').style.opacity='0';refresh();});
