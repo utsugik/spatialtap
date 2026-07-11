@@ -48,8 +48,10 @@
   .btn:disabled{opacity:.3;cursor:not-allowed}
   .file-label{cursor:pointer;display:inline-block}
   .file-label input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
-  .fname{margin-top:9px;font-size:10px;color:var(--muted);letter-spacing:.04em;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* 方位ラベル: 画面横位置=方位の対応を示す。5等分で並べるとBACK/LEFT/FRONT/RIGHT/BACKが
+     ちょうどu=0/0.25/0.5/0.75/1(=az -180/-90/0/+90/+180°)と一致する。控えめな表示。 */
+  .azlabels{margin-top:9px;display:flex;justify-content:space-between;
+    font-size:9px;letter-spacing:.14em;color:var(--muted2);text-transform:uppercase;font-weight:700}
 
   /* 闇に浮かぶスクリーン: overflow:hiddenだと同一要素のbox-shadowも切り取られてしまうため、
      stageにわずかな余白を持たせたうえでdrop-shadow(親のoverflowに影響されない)で外側に淡く発光させる。 */
@@ -73,6 +75,8 @@
   .dot.pulse::after{content:'';position:absolute;inset:-7px;border-radius:50%;border:1.5px solid #fff;animation:pulse 1.8s ease-out infinite}
   .dot.M.pulse::after{border-color:var(--M)} .dot.L.pulse::after{border-color:var(--L)} .dot.R.pulse::after{border-color:var(--R)}
   @keyframes pulse{0%{transform:scale(.7);opacity:.8}100%{transform:scale(2.2);opacity:0}}
+  /* 背後(|az|>90°)にあるドット: 色(L/Rの機能的な区別)は保ったまま、破線の輪郭で「背後」と分かるようにする */
+  .dot.behind{outline:1.5px dashed rgba(255,255,255,.75);outline-offset:2px}
 
   /* オービット中、ドットが背後(画面外)にある間の気配グロー */
   .edgeglow{position:absolute;top:0;bottom:0;width:28%;pointer-events:none;opacity:0}
@@ -157,7 +161,7 @@
     <button class="btn" id="reset">Center</button>
     <button class="btn" id="modeBtn">JUMP</button>
   </div>
-  <div class="fname" id="fname">no video loaded</div>
+  <div class="azlabels"><span>BACK</span><span>LEFT</span><span>FRONT</span><span>RIGHT</span><span>BACK</span></div>
 </header>
 
 <div id="stage">
@@ -239,7 +243,7 @@
   });
   log('init ok. tap LOG to hide.');
 
-  const ctrl={u:0.5,v:0.5,dist:3,yaw:0,pitch:0,roll:0,stereo:true,behind:0};
+  const ctrl={u:0.5,v:0.5,dist:3,yaw:0,pitch:0,roll:0,stereo:true};
   let placed=true, playing=false; // 起動直後から初期位置(中央)にドットを表示する
 
   const AC=window.AudioContext||window.webkitAudioContext;
@@ -290,7 +294,7 @@
 
   // フライバイ移動: タップ位置(ctrl.u/v =目標)へ、表示位置(dispU/dispV)が毎フレーム指数関数的に追従する。
   // 「誇張された体験」(HANDOFF 2章)の一環。ピッチは変えず、位置の弧＋わずかな音量ディップだけで「飛んでいく」感を出す。
-  let dispU=0.5, dispV=0.5, dispBehind=0, flyLastT=null, flyDist=0;
+  let dispU=0.5, dispV=0.5, flyLastT=null, flyDist=0;
   const FLY_TAU=0.11;   // 追従の時定数。約0.3秒でほぼ収束する
   const FLY_ARC=0.07;   // 弧の最大盛り上がり量（画面比率）
   const FLY_DIP=0.15;   // 飛行中の音量ディップ量（0-1、大きいほど飛行中に音が絞られる）
@@ -371,11 +375,9 @@
   }
   function center(){
     const p=flyingPos();
-    // frontAz: 画面内の左右位置だけによる方位(±90°)。dispBehind(0-1、フライバイと同じ補間で追従)が
-    // 増えるほど、同じ側(sgn)のまま±180°(真後ろ)まで連続的に回り込む(引き寄せ・追い越し方式)。
-    const frontAz=(p.u-0.5)*Math.PI;
-    const sgn=frontAz===0?1:Math.sign(frontAz);
-    const az=frontAz+sgn*dispBehind*(Math.PI-Math.abs(frontAz));
+    // 画面横幅全体で方位一周(±180°)をカバーする(Audio Brewers ab Encoderの横軸=BACK-LEFT-FRONT-RIGHT-BACKと同じ構造)。
+    // u=0(左端)=-180°、u=0.5(中央)=0°(正面)、u=1(右端)=+180°。左右端は同じ「真後ろ」。
+    const az=(p.u-0.5)*2*Math.PI;
     const el=(0.5-p.v)*Math.PI*0.5, r=ctrl.dist, ce=Math.cos(el);
     return {x:r*ce*Math.sin(az), y:r*Math.sin(el), zf:r*ce*Math.cos(az), az, el};
   }
@@ -435,20 +437,26 @@
   function updateDots(){
     const o=rotOffset(), clamp=n=>Math.max(0,Math.min(1,n));
     const p=flyingPos();
-    const front=applyEdgeGlow(center().az); // 背後(|az|>90°)なら画面にドットは描けない
+    // 画面横幅全体が方位一周に対応するため、背後(|az|>90°)も画面上にドットとして表示する
+    // (色は保ったまま破線の輪郭+半透明にして「背後」と分かるようにする。気配グローはオービット専用に残す)。
+    const az=center().az;
+    const azN=((az+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+    const isBehind=Math.abs(azN)>Math.PI/2;
     const M=$('dotM'),Ld=$('dotL'),Rd=$('dotR');
     M.classList.toggle('on',placed&&!ctrl.stereo);
     Ld.classList.toggle('on',placed&&ctrl.stereo);
     Rd.classList.toggle('on',placed&&ctrl.stereo);
     [M,Ld,Rd].forEach(d=>d.classList.toggle('pulse',playing&&d.classList.contains('on')));
+    [M,Ld,Rd].forEach(d=>d.classList.toggle('behind',isBehind));
     // 三段変化: 奥行き(depth)が増すほど小さく・ぼやけて・暗くする。同じ距離を参照するため音との連動タイミングは変わらないが、
     // 視覚だけはdepthVis(=depthC^DOT_VIS_POW)で近〜中距離の劣化を緩め、5〜10m帯でも視認・タップできるようにしている。
     const dv=dotVisualFromDepth(depthOf(ctrl.dist));
+    const behindOpMul=isBehind?0.5:1; // 背後はさらに半透明寄りにして視覚的に区別する
     [['M',M],['L',Ld],['R',Rd]].forEach(([key,el])=>{
       const px=DOT_BASE_PX[key]*dv.scale;
       el.style.width=px+'px'; el.style.height=px+'px';
       el.style.filter='blur('+dv.blur.toFixed(2)+'px)';
-      el.style.opacity=(front&&el.classList.contains('on'))?dv.op:0;
+      el.style.opacity=el.classList.contains('on')?dv.op*behindOpMul:0;
     });
     if(ctrl.stereo){
       Ld.style.left=clamp(p.u-o.x*SCN)*100+'%'; Ld.style.top=clamp(p.v+o.y*SCN)*100+'%';
@@ -556,9 +564,11 @@
     if(flyLastT==null) flyLastT=ts;
     const dt=Math.min(0.05,(ts-flyLastT)/1000); flyLastT=ts;
     const k=1-Math.exp(-dt/FLY_TAU);
-    const du=ctrl.u-dispU, dv=ctrl.v-dispV;
-    dispU+=du*k; dispV+=dv*k;
-    dispBehind+=(ctrl.behind-dispBehind)*k; // 背後への回り込みも同じ補間で滑らかに
+    // uは円環(0-1がラップアラウンドして繋がる)なので、素直な差ではなく最短経路の差分を使う。
+    // そうしないと端をまたいだ瞬間に「長い方(ほぼ1周)」を飛んでしまう。
+    let du=ctrl.u-dispU; du-=Math.round(du);
+    const dv=ctrl.v-dispV;
+    dispU+=du*k; dispU=((dispU%1)+1)%1; dispV+=dv*k;
     flyDist=Math.hypot(du,dv);
     refresh();
     requestAnimationFrame(flyStep);
@@ -591,17 +601,14 @@
     let sx=0,sy=0; pts.forEach(p=>{sx+=p.x;sy+=p.y;});
     return {x:sx/pts.length,y:sy/pts.length};
   }
-  // 背後配置(引き寄せ・追い越し方式): 下端(v=1)を超えてさらに引いた分(オーバーシュート)を
-  // BEHIND_PULL_RANGEで正規化し、ctrl.behind(0-1)とする。画面内(通常の縦ドラッグ=高さ)とは
-  // rawV<=1かどうかで自然に切り分かる(オーバーシュートがなければbehindは常に0)。
-  const BEHIND_PULL_RANGE=0.35;
   function applyTrackedPosition(){
     const c=trackedCentroid(); if(!c) return;
     const r=stage.getBoundingClientRect();
     const rawU=(c.x-r.left)/r.width+posOffU, rawV=(c.y-r.top)/r.height+posOffV;
-    ctrl.u=Math.max(0,Math.min(1,rawU));
+    // 左右は円環: 端を超えたらラップアラウンドして反対側から出てくる(BACK-LEFT-FRONT-RIGHT-BACK構造)。
+    ctrl.u=((rawU%1)+1)%1;
+    // 上下は高さ(elevation)のみ。画面外に出ないようクランプする(旧・下端引きで背後へ回り込む操作は廃止)。
     ctrl.v=Math.max(0,Math.min(1,rawV));
-    ctrl.behind=Math.max(0,Math.min(1,Math.max(0,rawV-1)/BEHIND_PULL_RANGE));
     placed=true; $('hint').style.opacity='0';
   }
   // ドットのダブルタップ判定(オービット起動): タップ座標が現在表示中のドット付近かを見る。
@@ -732,7 +739,6 @@
     log('change fired. files=',e.target.files?e.target.files.length:0);
     const f=e.target.files&&e.target.files[0]; if(!f){log('no file');return;}
     log('file:',f.name,'type=',f.type||'(empty)','size=',Math.round(f.size/1e6)+'MB');
-    $('fname').textContent=f.name;
     audioBuffer=null; useElementAudio=false;
     const url=URL.createObjectURL(f);
     vid.src=url; vid.muted=true; vid.load();
@@ -745,11 +751,9 @@
       audioBuffer=await ctx.decodeAudioData(arr.slice(0));
       setStereo(audioBuffer.numberOfChannels>=2);
       log('audio decoded ch=',audioBuffer.numberOfChannels,'dur=',audioBuffer.duration.toFixed(1));
-      $('fname').textContent=f.name+'（音声OK・'+(audioBuffer.numberOfChannels>=2?'ステレオ':'モノ')+'）';
     }catch(err){
       useElementAudio=true;
       log('decodeAudioData failed:',err.message||err,'-> element audio fallback');
-      $('fname').textContent=f.name+'（音声は動画から直接取得）';
     }
   });
 
@@ -762,7 +766,7 @@
       playing=false;$('play').textContent='▶ Play';setStatus('PAUSED',false);updateDots();log('paused');return;
     }
     const pv=vid.play();
-    if(pv&&pv.then) pv.then(()=>log('video.play ok')).catch(er=>{log('video.play blocked:',er.message);$('fname').textContent='再生ブロック：もう一度Play';});
+    if(pv&&pv.then) pv.then(()=>log('video.play ok')).catch(er=>{log('video.play blocked:',er.message,'-> もう一度Playを押してください');});
     if(audioBuffer){
       srcNode=ctx.createBufferSource();srcNode.buffer=audioBuffer;srcNode.loop=true;
       connectSource(srcNode);
