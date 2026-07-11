@@ -306,7 +306,6 @@
   $('fDist').value=Math.round(posFromDist(ctrl.dist));
   $('vDist').textContent=distPercentText(ctrl.dist);
   updateDistFill();
-  setDragMode('jump');
 
   function setStatus(t,on){$('status').className='status'+(on?' playing':'');$('status').innerHTML='<span class="dot2"></span>'+t;}
 
@@ -575,6 +574,7 @@
     $('modeBtn').classList.toggle('primary',m==='drag');
   }
   $('modeBtn').addEventListener('click',()=>setDragMode(dragMode==='jump'?'drag':'jump'));
+  setDragMode('jump'); // let dragMode宣言後に呼ぶ(宣言前に呼ぶとTDZでReferenceErrorになり全体が止まる)
 
   // ---------- stage pointer (1本指=位置、2本指=位置(重心)+距離(間隔)を同時操作) ----------
   // ルールはシンプルに統一: 触れている指の重心が常にXY位置を、2本指のときはさらに指の間隔がDistanceを駆動する。
