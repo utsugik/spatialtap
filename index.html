@@ -248,6 +248,7 @@
 
   const AC=window.AudioContext||window.webkitAudioContext;
   let ctx=null, pM=null,pL=null,pR=null, dry=null,conv=null,wet=null,send=null,limiter=null,distComp=null,flyGain=null,lpFilter=null, splitter=null;
+  let dbBack1k=null,dbBack12k=null,dbFront45=null,dbElev8k=null; // 方向バンド(directional bands)用のpeakingフィルタ
   let audioBuffer=null, srcNode=null, activeNode=null;
   let mediaSrc=null, mediaReady=false, useElementAudio=false;
 
@@ -279,6 +280,13 @@
   const DEPTH_LPF_FAR=1200;    // 最遠での高域カットオフ(こもるが不明瞭にはしない)
   const DEPTH_SEND_MIN=0.15, DEPTH_SEND_MAX=1.0;
   const widthScaleFromDepth=d=>1-d*(1-DEPTH_WIDTH_FAR);
+
+  // 方向バンド(directional bands / Blauert 1960s): 特定周波数帯域が音源位置に関わらず特定方向として知覚される現象を
+  // 意図的にブースト/カットして前後・上下の定位を誇張補強する(HANDOFF 2章)。dB量は控えめな初期値、実機で聴いて調整する前提。
+  const DB_BACK_1K_HZ=1000,  DB_BACK_1K_DB=5;    // 最強の後方バンド。背後で+
+  const DB_BACK_12K_HZ=12000,DB_BACK_12K_DB=4;   // 第2の後方バンド。背後で+
+  const DB_FRONT_45_HZ=4500, DB_FRONT_45_DB=4;   // 前方バンド。背後ではこれを削って前方の印象を打ち消す(=カット)
+  const DB_ELEV_8K_HZ=8000,  DB_ELEV_UP_DB=5, DB_ELEV_DOWN_DB=4; // 上方バンド。上で+、下で-(下方向は確立手法なしの逆アプローチ)
   // ドットの見た目(三段変化): 遠いほど小さく・ぼやけて・暗くし、音の奥行きと視覚を一致させる。
   // 音響用のdepthOf()はN=3で前寄せが強く、5m時点で既にdepthC≈0.84（ほぼ底値）に達してしまい、
   // タップの的として実用上よく使う5〜10m帯でドットがほぼ見えなくなる不具合があった（2026-07-10実機確認）。
@@ -335,7 +343,16 @@
     flyGain=ctx.createGain();flyGain.gain.value=1;
     // lpFilter: 奥行きが増すほど高域を削り、近い/遠いの一貫した奥行き感を強化する
     lpFilter=ctx.createBiquadFilter();lpFilter.type='lowpass';lpFilter.Q.value=0.7;lpFilter.frequency.value=DEPTH_LPF_NEAR;
-    distComp.connect(flyGain);flyGain.connect(lpFilter);lpFilter.connect(dry);lpFilter.connect(send);
+    // 方向バンド: pannerが合流した後の直列パスに4つのpeakingフィルタを挿入する。
+    // ・L/Rの方位差は小さく方向バンドは単耳の分光手がかりなので、合流後に1系統でかける方がシンプルで安全
+    //   (per-pannerだとフィルタ3倍・L/Rゲイン不一致のリスク。connectSourceのstereo/mono切替にも触れずに済む)。
+    // ・limiterの手前に置くのでクリッピング保護は維持される。正面・水平では全バンド0dB=完全フラット(初期状態で音色不変)。
+    const mkPeak=(hz,q)=>{const f=ctx.createBiquadFilter();f.type='peaking';f.frequency.value=hz;f.Q.value=q;f.gain.value=0;return f;};
+    dbBack1k=mkPeak(DB_BACK_1K_HZ,2.0); dbBack12k=mkPeak(DB_BACK_12K_HZ,2.0);
+    dbFront45=mkPeak(DB_FRONT_45_HZ,1.5); dbElev8k=mkPeak(DB_ELEV_8K_HZ,2.0);
+    distComp.connect(flyGain);flyGain.connect(lpFilter);
+    lpFilter.connect(dbBack1k);dbBack1k.connect(dbBack12k);dbBack12k.connect(dbFront45);dbFront45.connect(dbElev8k);
+    dbElev8k.connect(dry);dbElev8k.connect(send);
     [pM,pL,pR].forEach(p=>{p.connect(distComp);});
     splitter=ctx.createChannelSplitter(2);
     const L=ctx.listener,t=ctx.currentTime;
@@ -394,6 +411,22 @@
     updateDistComp(immediate,depthC);
     updateFlyGain(immediate);
     updateLowpass(immediate,depthC);
+    updateDirBands(immediate,C.az,C.el);
+  }
+  // 方向バンド: 方位azと仰角elに連動して各peakingフィルタのゲインを動かす。全てsetTargetAtTimeで滑らかに追従。
+  function updateDirBands(immediate,az,el){
+    if(!dbBack1k) return;
+    // backAmount: |az|が90°を超えて背後に回るほど0→1(真後ろ±180°で最大)。正面側(|az|<=90°)は0=フラット。
+    const azN=((az+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+    const backAmount=Math.max(0,Math.min(1,(Math.abs(azN)-Math.PI/2)/(Math.PI/2)));
+    // elNorm: 仰角を±1に正規化(+1=真上, -1=真下)。上で8kHzブースト、下で8kHzカット。
+    const elNorm=Math.max(-1,Math.min(1,el/(Math.PI/4)));
+    const elev8k=elNorm>=0?DB_ELEV_UP_DB*elNorm:-DB_ELEV_DOWN_DB*(-elNorm);
+    const t=ctx.currentTime,tc=immediate?0.001:0.06;
+    dbBack1k.gain.setTargetAtTime(DB_BACK_1K_DB*backAmount,t,tc);
+    dbBack12k.gain.setTargetAtTime(DB_BACK_12K_DB*backAmount,t,tc);
+    dbFront45.gain.setTargetAtTime(-DB_FRONT_45_DB*backAmount,t,tc);
+    dbElev8k.gain.setTargetAtTime(elev8k,t,tc);
   }
   function updateSend(immediate,depthC){
     if(!send) return;
@@ -531,6 +564,7 @@
     if(ctrl.stereo){setP(pL,C.x-o.x,C.y-o.y,C.zf-o.z);setP(pR,C.x+o.x,C.y+o.y,C.zf+o.z);}
     else{setP(pM,C.x,C.y,C.zf);}
     updateSend(false,depthC); updateDistComp(false,depthC); updateLowpass(false,depthC);
+    updateDirBands(false,az,el); // オービット周回中も方向バンドを追従させる(背後で「後ろから」を強化)
     // 前方半球(|az|<=90°)ならドット、それ以外は背後=画面端グロー(applyEdgeGlowで共通判定)。
     const front=applyEdgeGlow(az);
     const M=$('dotM'),Ld=$('dotL'),Rd=$('dotR');
